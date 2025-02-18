@@ -1,30 +1,26 @@
+require('dotenv').config();
 const express = require('express');
-const fs = require('fs').promises;
+const cors = require('cors');
+const { spawn } = require('child_process');
+const fs = require('fs-extra');
 const path = require('path');
-const { exec } = require('child_process');
-const util = require('util');
-const execPromise = util.promisify(exec);
 
 const app = express();
+app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// Configuration
-const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY;
-const ALLOWED_DIRS = ['/opt/latex-service/latexfiles']; // Updated path
-
-// Security: Validate file paths
-function isPathAllowed(filePath) {
-    const normalizedPath = path.normalize(filePath);
-    return ALLOWED_DIRS.some(dir => normalizedPath.startsWith(dir));
-}
-
-app.post('/compile', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || authHeader !== `Bearer ${API_KEY}`) {
+// API Key Authentication
+const authenticateApiKey = (req, res, next) => {
+    const apiKey = req.headers['x-api-key'];
+    if (apiKey !== process.env.LATEX_SERVICE_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
+    next();
+};
 
+app.use(authenticateApiKey);
+
+app.post('/compile', async (req, res) => {
     try {
         const { content, filename } = req.body;
         
@@ -36,68 +32,75 @@ app.post('/compile', async (req, res) => {
             return res.status(400).json({ error: 'Invalid content' });
         }
 
+        // Resolve the full path within /opt/latex-service
         const absolutePath = path.resolve('/opt/latex-service', filename);
-        if (!isPathAllowed(absolutePath)) {
-            return res.status(403).json({ 
-                error: 'Access to this directory is not allowed',
-                path: absolutePath
-            });
-        }
-        
         const dirPath = path.dirname(absolutePath);
         const baseFilename = path.basename(filename);
+
+        // Create directory if it doesn't exist
+        await fs.mkdirp(dirPath);
         
-        await fs.mkdir(dirPath, { recursive: true });
-        await fs.writeFile(absolutePath, content);
-        
-        // Run pdflatex twice to resolve references
-        for (let i = 0; i < 2; i++) {
-            const { stdout, stderr } = await execPromise(
-                `cd "${dirPath}" && pdflatex -interaction=nonstopmode "${baseFilename}"`,
-                { maxBuffer: 1024 * 1024 * 10 }
-            );
-            console.log(`Compilation ${i + 1} output:`, stdout);
-            if (stderr) console.error(`Compilation ${i + 1} errors:`, stderr);
+        // Write the LaTeX content
+        await fs.writeFile(absolutePath, content, 'utf-8');
+
+        // Run pdflatex in the correct directory
+        const pdflatex = spawn('pdflatex', [
+            '-interaction=nonstopmode',
+            baseFilename
+        ], {
+            cwd: dirPath
+        });
+
+        // Collect output for error reporting
+        let output = '';
+        pdflatex.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+        pdflatex.stderr.on('data', (data) => {
+            output += data.toString();
+        });
+
+        const exitCode = await new Promise((resolve, reject) => {
+            pdflatex.on('close', resolve);
+            pdflatex.on('error', reject);
+        });
+
+        if (exitCode !== 0) {
+            throw new Error(`PDF compilation failed:\n${output}`);
         }
-        
-        const pdfFilename = baseFilename.replace('.tex', '.pdf');
-        const pdfPath = path.join(dirPath, pdfFilename);
-        const pdfContent = await fs.readFile(pdfPath);
-        
-        // Clean up temporary files
+
+        // Read the generated PDF
+        const pdfPath = path.join(dirPath, baseFilename.replace('.tex', '.pdf'));
+        const pdfBuffer = await fs.readFile(pdfPath);
+
+        // Clean up files
         const cleanupFiles = [
             baseFilename,
-            pdfFilename,
+            baseFilename.replace('.tex', '.pdf'),
             baseFilename.replace('.tex', '.aux'),
             baseFilename.replace('.tex', '.log'),
             baseFilename.replace('.tex', '.out')
         ].map(file => path.join(dirPath, file));
-        
+
         await Promise.all(
             cleanupFiles.map(file => 
-                fs.unlink(file).catch(err => 
+                fs.remove(file).catch(err => 
                     console.error(`Failed to delete ${file}:`, err)
                 )
             )
         );
-        
-        res.set('Content-Type', 'application/pdf');
-        res.send(pdfContent);
-        
+
+        res.set({
+            'Content-Type': 'application/pdf',
+            'Content-Disposition': 'attachment'
+        });
+        res.send(pdfBuffer);
+
     } catch (error) {
         console.error('Compilation error:', error);
-        res.status(500).json({ 
-            error: 'PDF compilation failed',
-            details: error.message,
-            command: error.cmd
-        });
+        res.status(500).json({ error: error.message });
     }
 });
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
-});
-
-app.listen(PORT, () => {
-    console.log(`LaTeX compilation server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => console.log(`LaTeX service running on port ${PORT}`));

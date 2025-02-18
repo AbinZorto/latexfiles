@@ -38,7 +38,7 @@ app.post("/compile", async (req, res) => {
       });
     }
 
-    const absolutePath = path.resolve("/opt/latex-service", filename);
+    const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
 
@@ -119,13 +119,14 @@ app.post("/compile", async (req, res) => {
       baseFilename.replace(".tex", ".out"),
     ].map((file) => path.join(dirPath, file));
 
-    await Promise.all(
-      cleanupFiles.map((file) =>
-        fs
-          .remove(file)
-          .catch((err) => console.error(`Failed to delete ${file}:`, err))
-      )
-    );
+    // Comment out this cleanup block for debugging
+    // await Promise.all(
+    //     cleanupFiles.map(file =>
+    //         fs.remove(file).catch(err =>
+    //             console.error(`Failed to delete ${file}:`, err)
+    //         )
+    //     )
+    // );
 
     res.set({
       "Content-Type": "application/pdf",

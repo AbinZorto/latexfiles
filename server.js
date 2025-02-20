@@ -4,6 +4,7 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 const fs = require("fs-extra");
 const path = require("path");
+const os = require("os");
 
 const app = express();
 app.use(cors());
@@ -55,7 +56,6 @@ app.post("/compile", async (req, res) => {
       "-interaction=nonstopmode",
       "-file-line-error",
       "-halt-on-error=n",
-      "-shell-escape", // Add this to allow external commands
       baseFilename,
     ];
 
@@ -74,14 +74,10 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    await new Promise((resolve, reject) => {
-      pdflatex1.on("close", (code) => {
-        // Don't reject on non-zero exit code
-        resolve();
-      });
-    });
+    // Don't check exit code, just wait for process to finish
+    await new Promise((resolve) => pdflatex1.on("close", resolve));
 
-    // Second run with same permissive handling
+    // Second run
     const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout2 = "";
     let stderr2 = "";
@@ -96,78 +92,96 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    await new Promise((resolve, reject) => {
-      pdflatex2.on("close", (code) => {
-        // Don't reject on non-zero exit code
-        resolve();
-      });
+    pdflatex2.stdout.on("data", (data) => {
+      fullOutput += data.toString();
+    });
+    pdflatex2.stderr.on("data", (data) => {
+      fullOutput += data.toString();
     });
 
-    // Check if PDF exists and try to send it
-    const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
+    // Wait for second compilation
+    await new Promise((resolve) => pdflatex2.on("close", resolve));
 
+    // Try to read and send PDF regardless of compilation warnings
     try {
-      const pdfBuffer = await fs.readFile(pdfPath);
-
-      // Send PDF if it exists, regardless of compilation warnings/errors
+      const pdfBuffer = await fs.readFile(absolutePath);
       res.set({
         "Content-Type": "application/pdf",
         "Content-Disposition": "attachment",
       });
       res.send(pdfBuffer);
-
-      // Cleanup after successful send
-      const cleanupFiles = [
-        baseFilename,
-        baseFilename.replace(".tex", ".pdf"),
-        baseFilename.replace(".tex", ".aux"),
-        baseFilename.replace(".tex", ".log"),
-        baseFilename.replace(".tex", ".out"),
-      ].map((file) => path.join(dirPath, file));
-
-      // Optional cleanup
-      await Promise.all(
-        cleanupFiles.map((file) =>
-          fs
-            .remove(file)
-            .catch((err) => console.error(`Failed to delete ${file}:`, err))
-        )
-      );
     } catch (pdfError) {
-      // Only throw error if PDF wasn't generated at all
-      throw new Error(
-        JSON.stringify({
-          message: "PDF generation failed completely - no output file created",
-          stdout: stdout1 + stdout2,
-          stderr: stderr1 + stderr2,
-          contentPreview: content.substring(0, 200) + "...",
-        })
-      );
+      // Only if PDF wasn't generated at all
+      let logContent = "";
+      try {
+        logContent = await fs.readFile(logFilePath, "utf-8");
+      } catch (logError) {
+        console.error("Error reading log file:", logError);
+      }
+
+      const errorDetails = {
+        fullOutput,
+        logContent,
+        compilationOutput: fullOutput
+          .split("\n")
+          .filter(
+            (line) =>
+              line.includes("!") ||
+              line.includes("Error") ||
+              line.includes("Fatal")
+          )
+          .join("\n"),
+      };
+
+      return res.status(500).json({
+        statusCode: 500,
+        error: "LaTeX Compilation Failed",
+        details: {
+          mainError: extractMainError(logContent || fullOutput),
+          location: extractErrorLocation(logContent || fullOutput),
+          message: extractErrorMessage(logContent || fullOutput),
+          fullError: errorDetails,
+        },
+      });
     }
   } catch (error) {
-    console.error("Compilation error:", error);
+    console.error("Server error:", error);
     res.status(500).json({
-      error: "PDF compilation failed",
-      details: error.message,
+      statusCode: 500,
+      error: "Server Error",
+      message: error.message,
     });
+  } finally {
+    // Clean up temporary directory
+    if (uniqueTmpDir) {
+      await fs.remove(uniqueTmpDir).catch(console.error);
+    }
   }
 });
 
-// Helper function to parse LaTeX errors from log file
-function parseLatexErrors(logContent) {
-  const errors = [];
-  const errorRegex = /!(.*?)\nl\.(\d+)(.*?)(?=\n\n|\n!|$)/gs;
+// Error Extraction Utilities
+function extractMainError(output) {
+  const errorMatch = output.match(/(?:!|Error:).*$/m);
+  return errorMatch ? errorMatch[0].trim() : "Unknown error";
+}
 
-  let match;
-  while ((match = errorRegex.exec(logContent)) !== null) {
-    errors.push({
-      type: match[1].trim(),
-      line: match[2],
-      details: match[3].trim(),
-    });
-  }
+function extractErrorLocation(output) {
+  const lineMatch = output.match(/l\.(\d+)/);
+  return lineMatch ? `Line ${lineMatch[1]}` : "Unknown location";
+}
 
-  return errors;
+function extractErrorMessage(output) {
+  const lines = output.split("\n");
+  const errorIndex = lines.findIndex(
+    (line) => line.includes("!") || line.includes("Error:")
+  );
+  if (errorIndex === -1) return "Unknown error message";
+
+  return lines
+    .slice(errorIndex, errorIndex + 3)
+    .map((line) => line.trim())
+    .filter((line) => line)
+    .join(" ");
 }
 
 const PORT = process.env.PORT || 3002;

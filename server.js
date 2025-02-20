@@ -114,7 +114,6 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    // Don't check exit code, just wait for process to finish
     await new Promise((resolve) => pdflatex1.on("close", resolve));
 
     // Second run
@@ -132,43 +131,31 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    // Don't check exit code, just wait for process to finish
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-    // Always try to read the PDF first if it exists
+    // Check if PDF was generated
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
-      // Check if PDF exists and try to read it
       const pdfBuffer = await fs.readFile(pdfPath);
-
-      // If we got here, we have a PDF - encode it as base64
       const pdfBase64 = pdfBuffer.toString("base64");
 
-      // Return both the PDF and any warnings/output
-      res.status(200).json({
+      // Always return success if we have a PDF, even with warnings
+      return res.status(200).json({
         pdf: pdfBase64,
         output: formatLatexOutput(stdout1 + stdout2),
-        warnings: true, // Indicate there were warnings
+        warnings: true,
       });
     } catch (pdfError) {
-      // Only if we can't read the PDF, then throw error
-      throw new Error(
-        JSON.stringify({
-          message: "No PDF was generated",
-          stdout: formatLatexOutput(stdout1 + stdout2),
-          stderr: stderr1 + stderr2,
-        })
-      );
+      // Only throw if we couldn't read the PDF
+      console.error("Failed to read PDF:", pdfError);
+      throw new Error("No PDF was generated");
     }
   } catch (error) {
     console.error("Compilation error:", error);
     res.status(500).json({
       error: "PDF compilation failed",
       details: error.message,
-      parsedErrors: error.message.includes("{")
-        ? JSON.parse(error.message).errors
-        : null,
     });
   }
 });

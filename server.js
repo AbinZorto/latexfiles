@@ -4,7 +4,6 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 const fs = require("fs-extra");
 const path = require("path");
-const os = require("os");
 
 const app = express();
 app.use(cors());
@@ -92,96 +91,83 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    pdflatex2.stdout.on("data", (data) => {
-      fullOutput += data.toString();
-    });
-    pdflatex2.stderr.on("data", (data) => {
-      fullOutput += data.toString();
-    });
-
-    // Wait for second compilation
+    // Don't check exit code, just wait for process to finish
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-    // Try to read and send PDF regardless of compilation warnings
+    // Always try to send the PDF if it exists
+    const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
+
     try {
-      const pdfBuffer = await fs.readFile(absolutePath);
+      const pdfBuffer = await fs.readFile(pdfPath);
       res.set({
         "Content-Type": "application/pdf",
         "Content-Disposition": "attachment",
       });
       res.send(pdfBuffer);
     } catch (pdfError) {
-      // Only if PDF wasn't generated at all
+      // Read the log file to parse errors
+      const logPath = path.join(dirPath, baseFilename.replace(".tex", ".log"));
       let logContent = "";
       try {
-        logContent = await fs.readFile(logFilePath, "utf-8");
+        logContent = await fs.readFile(logPath, "utf-8");
       } catch (logError) {
         console.error("Error reading log file:", logError);
       }
 
-      const errorDetails = {
-        fullOutput,
-        logContent,
-        compilationOutput: fullOutput
-          .split("\n")
-          .filter(
-            (line) =>
-              line.includes("!") ||
-              line.includes("Error") ||
-              line.includes("Fatal")
-          )
-          .join("\n"),
-      };
+      // Parse errors from log content
+      const errors = parseLatexErrors(logContent);
 
-      return res.status(500).json({
-        statusCode: 500,
-        error: "LaTeX Compilation Failed",
-        details: {
-          mainError: extractMainError(logContent || fullOutput),
-          location: extractErrorLocation(logContent || fullOutput),
-          message: extractErrorMessage(logContent || fullOutput),
-          fullError: errorDetails,
-        },
-      });
+      throw new Error(
+        JSON.stringify({
+          message: "PDF compilation failed",
+          errors: errors,
+          stdout: stdout1 + stdout2,
+          stderr: stderr1 + stderr2,
+        })
+      );
     }
   } catch (error) {
-    console.error("Server error:", error);
+    console.error("Compilation error:", error);
     res.status(500).json({
-      statusCode: 500,
-      error: "Server Error",
-      message: error.message,
+      error: "PDF compilation failed",
+      details: error.message,
+      parsedErrors: error.message.includes("{")
+        ? JSON.parse(error.message).errors
+        : null,
     });
-  } finally {
-    // Clean up temporary directory
-    if (uniqueTmpDir) {
-      await fs.remove(uniqueTmpDir).catch(console.error);
-    }
   }
 });
 
-// Error Extraction Utilities
-function extractMainError(output) {
-  const errorMatch = output.match(/(?:!|Error:).*$/m);
-  return errorMatch ? errorMatch[0].trim() : "Unknown error";
-}
+// Helper function to parse LaTeX errors from log file
+function parseLatexErrors(logContent) {
+  const errors = [];
+  // Match LaTeX errors more comprehensively
+  const errorRegex =
+    /!(.*?)(?:\nl\.|line\s)(\d+)(?:\s|\.)(.*?)(?=\n\n|\n!|$)/gs;
 
-function extractErrorLocation(output) {
-  const lineMatch = output.match(/l\.(\d+)/);
-  return lineMatch ? `Line ${lineMatch[1]}` : "Unknown location";
-}
+  let match;
+  while ((match = errorRegex.exec(logContent)) !== null) {
+    errors.push({
+      type: match[1].trim(),
+      line: parseInt(match[2], 10),
+      details: match[3].trim().replace(/\n\s*/g, " "), // Clean up multi-line errors
+      context: match[0], // Include full error context
+    });
+  }
 
-function extractErrorMessage(output) {
-  const lines = output.split("\n");
-  const errorIndex = lines.findIndex(
-    (line) => line.includes("!") || line.includes("Error:")
-  );
-  if (errorIndex === -1) return "Unknown error message";
+  // Also catch warnings
+  const warningRegex =
+    /LaTeX Warning:(.*?)(?:\son\sline\s(\d+)|(?=\n\n|\n[^\\]))/gs;
+  while ((match = warningRegex.exec(logContent)) !== null) {
+    errors.push({
+      type: "Warning",
+      line: match[2] ? parseInt(match[2], 10) : null,
+      details: match[1].trim().replace(/\n\s*/g, " "),
+      context: match[0],
+    });
+  }
 
-  return lines
-    .slice(errorIndex, errorIndex + 3)
-    .map((line) => line.trim())
-    .filter((line) => line)
-    .join(" ");
+  return errors;
 }
 
 const PORT = process.env.PORT || 3002;

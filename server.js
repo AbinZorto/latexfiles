@@ -93,6 +93,7 @@ app.post("/compile", async (req, res) => {
 
     // Run pdflatex with more permissive options
     const pdflatexOptions = [
+      "-file-line-error",
       "-interaction=nonstopmode",
       "-halt-on-error=n",
       baseFilename,
@@ -166,23 +167,24 @@ app.post("/compile", async (req, res) => {
 });
 
 // Helper function to parse LaTeX errors from log file
-function parseLatexErrors(logContent) {
+const parseLatexErrors = (logContent) => {
   const errors = [];
-  // Match LaTeX errors more comprehensively
-  const errorRegex =
-    /!(.*?)(?:\nl\.|line\s)(\d+)(?:\s|\.)(.*?)(?=\n\n|\n!|$)/gs;
-
   let match;
+
+  // Parse LaTeX errors
+  const errorRegex = /^(?:.|[\r\n])*?(?:!\s.*\n|.*?:\d+:\s.*\n)/gm;
   while ((match = errorRegex.exec(logContent)) !== null) {
+    const errorText = match[0].trim();
+    const lineMatch = errorText.match(/:(\d+):/);
     errors.push({
-      type: match[1].trim(),
-      line: parseInt(match[2], 10),
-      details: match[3].trim().replace(/\n\s*/g, " "), // Clean up multi-line errors
-      context: match[0], // Include full error context
+      type: "Error",
+      line: lineMatch ? parseInt(lineMatch[1], 10) : null,
+      details: errorText.replace(/^!?\s*/, ""),
+      context: match[0],
     });
   }
 
-  // Also catch warnings
+  // Parse LaTeX warnings
   const warningRegex =
     /LaTeX Warning:(.*?)(?:\son\sline\s(\d+)|(?=\n\n|\n[^\\]))/gs;
   while ((match = warningRegex.exec(logContent)) !== null) {
@@ -195,7 +197,7 @@ function parseLatexErrors(logContent) {
   }
 
   return errors;
-}
+};
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`LaTeX service running on port ${PORT}`));

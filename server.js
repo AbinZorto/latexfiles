@@ -6,7 +6,11 @@ const fs = require("fs-extra");
 const path = require("path");
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    exposedHeaders: ["X-LaTeX-Output"],
+  })
+);
 app.use(express.json({ limit: "50mb" }));
 
 // API Key Authentication
@@ -180,4 +184,3 @@ const parseLatexErrors = (logContent) => {
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`LaTeX service running on port ${PORT}`));
-

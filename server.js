@@ -71,50 +71,66 @@ app.post("/compile", async (req, res) => {
     await fs.mkdirp(dirPath);
     await fs.writeFile(absolutePath, content, "utf-8");
 
-    // Run pdflatex twice
-    for (let i = 0; i < 2; i++) {
-      const pdflatex = spawn(
-        "pdflatex",
-        [
-          "-file-line-error",
-          "-interaction=nonstopmode",
-          "-halt-on-error=n",
-          baseFilename,
-        ],
-        { cwd: dirPath }
-      );
+    // Run pdflatex twice as before
+    const pdflatex1 = spawn(
+      "pdflatex",
+      [
+        "-file-line-error",
+        "-interaction=nonstopmode",
+        "-halt-on-error=n",
+        baseFilename,
+      ],
+      { cwd: dirPath }
+    );
 
-      let stdout = "";
-      let stderr = "";
+    let stdout1 = "";
+    pdflatex1.stdout.on("data", (data) => (stdout1 += data.toString()));
+    await new Promise((resolve) => pdflatex1.on("close", resolve));
 
-      pdflatex.stdout.on("data", (data) => {
-        stdout += data.toString();
-      });
+    const pdflatex2 = spawn(
+      "pdflatex",
+      [
+        "-file-line-error",
+        "-interaction=nonstopmode",
+        "-halt-on-error=n",
+        baseFilename,
+      ],
+      { cwd: dirPath }
+    );
 
-      pdflatex.stderr.on("data", (data) => {
-        stderr += data.toString();
-      });
+    let stdout2 = "";
+    pdflatex2.stdout.on("data", (data) => (stdout2 += data.toString()));
+    await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-      await new Promise((resolve) => pdflatex.on("close", resolve));
-    }
-
-    // Check if PDF was generated, regardless of exit code
+    // Check for PDF regardless of exit code
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
-      const pdfBuffer = await fs.readFile(pdfPath);
-      if (pdfBuffer.length > 0) {
-        // PDF exists and has content
+      const pdfStats = await fs.stat(pdfPath);
+
+      // If PDF exists and has size, return it
+      if (pdfStats.size > 0) {
+        const pdfBuffer = await fs.readFile(pdfPath);
+        const logPath = path.join(
+          dirPath,
+          baseFilename.replace(".tex", ".log")
+        );
+        const logContent = await fs.readFile(logPath, "utf-8");
+
         return res.status(200).json({
           success: true,
           pdf: pdfBuffer.toString("base64"),
-          output: formatLatexOutput(stdout),
+          output: formatLatexOutput(stdout1 + stdout2),
+          log: logContent,
           warnings: true,
         });
       }
     } catch (pdfError) {
-      throw new Error("Failed to generate PDF");
+      console.error("Error reading PDF:", pdfError);
     }
+
+    // Only reach here if PDF wasn't generated or couldn't be read
+    throw new Error("No PDF was generated");
   } catch (error) {
     console.error("Compilation error:", error);
     res.status(500).json({

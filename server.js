@@ -50,12 +50,12 @@ app.post("/compile", async (req, res) => {
     console.log(`LaTeX file written to: ${absolutePath}`);
     console.log("Content preview:", content.substring(0, 200) + "...");
 
-    // Run pdflatex twice to resolve references
+    // Run pdflatex with more permissive options
     const pdflatexOptions = [
       "-interaction=nonstopmode",
       "-file-line-error",
-      // Add -halt-on-error=n to continue despite errors
       "-halt-on-error=n",
+      "-shell-escape", // Add this to allow external commands
       baseFilename,
     ];
 
@@ -74,9 +74,14 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    await new Promise((resolve) => pdflatex1.on("close", resolve));
+    await new Promise((resolve, reject) => {
+      pdflatex1.on("close", (code) => {
+        // Don't reject on non-zero exit code
+        resolve();
+      });
+    });
 
-    // Second run to resolve references
+    // Second run with same permissive handling
     const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout2 = "";
     let stderr2 = "";
@@ -91,75 +96,60 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    await new Promise((resolve) => pdflatex2.on("close", resolve));
+    await new Promise((resolve, reject) => {
+      pdflatex2.on("close", (code) => {
+        // Don't reject on non-zero exit code
+        resolve();
+      });
+    });
 
-    // Check if PDF was generated despite errors
+    // Check if PDF exists and try to send it
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
       const pdfBuffer = await fs.readFile(pdfPath);
 
-      // Send PDF if it exists, even with compilation warnings
+      // Send PDF if it exists, regardless of compilation warnings/errors
       res.set({
         "Content-Type": "application/pdf",
         "Content-Disposition": "attachment",
       });
       res.send(pdfBuffer);
+
+      // Cleanup after successful send
+      const cleanupFiles = [
+        baseFilename,
+        baseFilename.replace(".tex", ".pdf"),
+        baseFilename.replace(".tex", ".aux"),
+        baseFilename.replace(".tex", ".log"),
+        baseFilename.replace(".tex", ".out"),
+      ].map((file) => path.join(dirPath, file));
+
+      // Optional cleanup
+      await Promise.all(
+        cleanupFiles.map((file) =>
+          fs
+            .remove(file)
+            .catch((err) => console.error(`Failed to delete ${file}:`, err))
+        )
+      );
     } catch (pdfError) {
       // Only throw error if PDF wasn't generated at all
       throw new Error(
         JSON.stringify({
-          message: "PDF generation failed completely",
+          message: "PDF generation failed completely - no output file created",
           stdout: stdout1 + stdout2,
           stderr: stderr1 + stderr2,
           contentPreview: content.substring(0, 200) + "...",
         })
       );
     }
-
-    // Clean up files
-    const cleanupFiles = [
-      baseFilename,
-      baseFilename.replace(".tex", ".pdf"),
-      baseFilename.replace(".tex", ".aux"),
-      baseFilename.replace(".tex", ".log"),
-      baseFilename.replace(".tex", ".out"),
-    ].map((file) => path.join(dirPath, file));
-
-    // Comment out this cleanup block for debugging
-    // await Promise.all(
-    //     cleanupFiles.map(file =>
-    //         fs.remove(file).catch(err =>
-    //             console.error(`Failed to delete ${file}:`, err)
-    //         )
-    //     )
-    // );
   } catch (error) {
     console.error("Compilation error:", error);
-
-    // Try to parse the error message if it's JSON
-    let errorResponse = {
+    res.status(500).json({
       error: "PDF compilation failed",
       details: error.message,
-    };
-
-    try {
-      const parsedError = JSON.parse(error.message);
-      errorResponse = {
-        error: "PDF compilation failed",
-        exitCode: parsedError.exitCode,
-        details: {
-          errors: parsedError.errors,
-          stdout: parsedError.stdout,
-          stderr: parsedError.stderr,
-          contentPreview: parsedError.contentPreview,
-        },
-      };
-    } catch (e) {
-      // If parsing fails, use the original error message
-    }
-
-    res.status(500).json(errorResponse);
+    });
   }
 });
 

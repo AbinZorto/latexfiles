@@ -20,6 +20,47 @@ const authenticateApiKey = (req, res, next) => {
 
 app.use(authenticateApiKey);
 
+// Add this helper function to format LaTeX output
+function formatLatexOutput(stdout) {
+  // Split into lines and filter out empty ones
+  const lines = stdout.split("\n").filter((line) => line.trim());
+
+  // Group related messages
+  const formatted = lines
+    .reduce((acc, line) => {
+      // Remove common TeX Live paths to reduce noise
+      line = line.replace(
+        /\/usr\/local\/texlive\/\d+\/texmf-dist\/tex\/[^\s]+\//,
+        ""
+      );
+
+      // Skip certain verbose lines
+      if (
+        line.includes("texmf-dist") ||
+        line.includes("geometry driver") ||
+        line.includes("restricted \\write18 enabled")
+      ) {
+        return acc;
+      }
+
+      // Highlight important messages
+      if (line.startsWith("!")) {
+        return acc + "\nError: " + line;
+      }
+      if (line.includes("Warning")) {
+        return acc + "\nWarning: " + line;
+      }
+      if (line.includes("Output written on")) {
+        return acc + "\nOutput: " + line;
+      }
+
+      return acc + "\n" + line;
+    }, "")
+    .trim();
+
+  return formatted;
+}
+
 app.post("/compile", async (req, res) => {
   try {
     const { content, filename } = req.body;
@@ -121,7 +162,7 @@ app.post("/compile", async (req, res) => {
         JSON.stringify({
           message: "PDF compilation failed",
           errors: errors,
-          stdout: stdout1 + stdout2,
+          stdout: formatLatexOutput(stdout1 + stdout2),
           stderr: stderr1 + stderr2,
         })
       );

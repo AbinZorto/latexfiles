@@ -135,33 +135,27 @@ app.post("/compile", async (req, res) => {
     // Don't check exit code, just wait for process to finish
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-    // Always try to send the PDF if it exists
+    // Always try to read the PDF first if it exists
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
+      // Check if PDF exists and try to read it
       const pdfBuffer = await fs.readFile(pdfPath);
-      res.set({
-        "Content-Type": "application/pdf",
-        "Content-Disposition": "attachment",
+
+      // If we got here, we have a PDF - encode it as base64
+      const pdfBase64 = pdfBuffer.toString("base64");
+
+      // Return both the PDF and any warnings/output
+      res.status(200).json({
+        pdf: pdfBase64,
+        output: formatLatexOutput(stdout1 + stdout2),
+        warnings: true, // Indicate there were warnings
       });
-      res.send(pdfBuffer);
     } catch (pdfError) {
-      // Read the log file to parse errors
-      const logPath = path.join(dirPath, baseFilename.replace(".tex", ".log"));
-      let logContent = "";
-      try {
-        logContent = await fs.readFile(logPath, "utf-8");
-      } catch (logError) {
-        console.error("Error reading log file:", logError);
-      }
-
-      // Parse errors from log content
-      const errors = parseLatexErrors(logContent);
-
+      // Only if we can't read the PDF, then throw error
       throw new Error(
         JSON.stringify({
-          message: "PDF compilation failed",
-          errors: errors,
+          message: "No PDF was generated",
           stdout: formatLatexOutput(stdout1 + stdout2),
           stderr: stderr1 + stderr2,
         })

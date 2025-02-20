@@ -112,7 +112,7 @@ app.post("/compile", async (req, res) => {
       return res.status(200).json({
         success: true,
         pdf: pdfBuffer.toString("base64"),
-        output: formatLatexOutput(stdout),
+        output: formatLatexOutput(stdout1 + stdout2), // Use both stdout captures
         warnings: true,
       });
     }

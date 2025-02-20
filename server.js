@@ -86,22 +86,6 @@ app.post("/compile", async (req, res) => {
     let stdout1 = "";
     pdflatex1.stdout.on("data", (data) => (stdout1 += data.toString()));
     await new Promise((resolve) => pdflatex1.on("close", resolve));
-
-    const pdflatex2 = spawn(
-      "pdflatex",
-      [
-        "-file-line-error",
-        "-interaction=nonstopmode",
-        "-halt-on-error=n",
-        baseFilename
-      ],
-      { cwd: dirPath }
-    );
-
-    let stdout2 = "";
-    pdflatex2.stdout.on("data", (data) => (stdout2 += data.toString()));
-    await new Promise((resolve) => pdflatex2.on("close", resolve));
-
     // Check for PDF regardless of exit code
     // Instead of checking process exit code, look for PDF
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
@@ -112,7 +96,7 @@ app.post("/compile", async (req, res) => {
       return res.status(200).json({
         success: true,
         pdf: pdfBuffer.toString("base64"),
-        output: formatLatexOutput(stdout1 + stdout2), // Use both stdout captures
+        output: formatLatexOutput(stdout1), // Use both stdout captures
         warnings: true,
       });
     }

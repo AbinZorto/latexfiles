@@ -93,7 +93,7 @@ app.post("/compile", async (req, res) => {
         "-file-line-error",
         "-interaction=nonstopmode",
         "-halt-on-error=n",
-        baseFilename,
+        baseFilename
       ],
       { cwd: dirPath }
     );

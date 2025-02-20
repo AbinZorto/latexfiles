@@ -103,33 +103,21 @@ app.post("/compile", async (req, res) => {
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
     // Check for PDF regardless of exit code
+    // Instead of checking process exit code, look for PDF
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
-    try {
-      const pdfStats = await fs.stat(pdfPath);
-
-      // If PDF exists and has size, return it
-      if (pdfStats.size > 0) {
-        const pdfBuffer = await fs.readFile(pdfPath);
-        const logPath = path.join(
-          dirPath,
-          baseFilename.replace(".tex", ".log")
-        );
-        const logContent = await fs.readFile(logPath, "utf-8");
-
-        return res.status(200).json({
-          success: true,
-          pdf: pdfBuffer.toString("base64"),
-          output: formatLatexOutput(stdout1 + stdout2),
-          log: logContent,
-          warnings: true,
-        });
-      }
-    } catch (pdfError) {
-      console.error("Error reading PDF:", pdfError);
+    if (await fs.pathExists(pdfPath)) {
+      const pdfBuffer = await fs.readFile(pdfPath);
+      // PDF was generated, return it despite warnings
+      return res.status(200).json({
+        success: true,
+        pdf: pdfBuffer.toString("base64"),
+        output: formatLatexOutput(stdout),
+        warnings: true,
+      });
     }
 
-    // Only reach here if PDF wasn't generated or couldn't be read
+    // Only error if no PDF was generated
     throw new Error("No PDF was generated");
   } catch (error) {
     console.error("Compilation error:", error);

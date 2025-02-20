@@ -50,65 +50,72 @@ app.post("/compile", async (req, res) => {
     console.log(`LaTeX file written to: ${absolutePath}`);
     console.log("Content preview:", content.substring(0, 200) + "...");
 
-    // Enhanced pdflatex execution with more detailed logging
-    const pdflatex = spawn(
-      "pdflatex",
-      [
-        "-interaction=nonstopmode",
-        "-file-line-error", // Adds line numbers to error messages
-        baseFilename,
-      ],
-      {
-        cwd: dirPath,
-      }
-    );
+    // Run pdflatex twice to resolve references
+    const pdflatexOptions = [
+      "-interaction=nonstopmode",
+      "-file-line-error",
+      // Add -halt-on-error=n to continue despite errors
+      "-halt-on-error=n",
+      baseFilename,
+    ];
 
-    let stdout = "";
-    let stderr = "";
+    // First run
+    const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+    let stdout1 = "";
+    let stderr1 = "";
 
-    pdflatex.stdout.on("data", (data) => {
-      stdout += data.toString();
+    pdflatex1.stdout.on("data", (data) => {
+      stdout1 += data.toString();
       console.log("pdflatex output:", data.toString());
     });
 
-    pdflatex.stderr.on("data", (data) => {
-      stderr += data.toString();
+    pdflatex1.stderr.on("data", (data) => {
+      stderr1 += data.toString();
       console.error("pdflatex error:", data.toString());
     });
 
-    const exitCode = await new Promise((resolve, reject) => {
-      pdflatex.on("close", resolve);
-      pdflatex.on("error", reject);
+    await new Promise((resolve) => pdflatex1.on("close", resolve));
+
+    // Second run to resolve references
+    const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+    let stdout2 = "";
+    let stderr2 = "";
+
+    pdflatex2.stdout.on("data", (data) => {
+      stdout2 += data.toString();
+      console.log("pdflatex output:", data.toString());
     });
 
-    if (exitCode !== 0) {
-      // Parse the log file for more detailed error information
-      const logPath = path.join(dirPath, baseFilename.replace(".tex", ".log"));
-      let logContent = "";
-      try {
-        logContent = await fs.readFile(logPath, "utf-8");
-      } catch (err) {
-        console.error("Could not read log file:", err);
-      }
+    pdflatex2.stderr.on("data", (data) => {
+      stderr2 += data.toString();
+      console.error("pdflatex error:", data.toString());
+    });
 
-      // Extract relevant error information
-      const errorInfo = parseLatexErrors(logContent);
+    await new Promise((resolve) => pdflatex2.on("close", resolve));
 
+    // Check if PDF was generated despite errors
+    const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
+
+    try {
+      const pdfBuffer = await fs.readFile(pdfPath);
+
+      // Send PDF if it exists, even with compilation warnings
+      res.set({
+        "Content-Type": "application/pdf",
+        "Content-Disposition": "attachment",
+      });
+      res.send(pdfBuffer);
+    } catch (pdfError) {
+      // Only throw error if PDF wasn't generated at all
       throw new Error(
         JSON.stringify({
-          message: "PDF compilation failed",
-          exitCode,
-          stdout,
-          stderr,
-          errors: errorInfo,
+          message: "PDF generation failed completely",
+          stdout: stdout1 + stdout2,
+          stderr: stderr1 + stderr2,
           contentPreview: content.substring(0, 200) + "...",
         })
       );
     }
-
-    // Read the generated PDF
-    const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
-    const pdfBuffer = await fs.readFile(pdfPath);
 
     // Clean up files
     const cleanupFiles = [
@@ -127,12 +134,6 @@ app.post("/compile", async (req, res) => {
     //         )
     //     )
     // );
-
-    res.set({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": "attachment",
-    });
-    res.send(pdfBuffer);
   } catch (error) {
     console.error("Compilation error:", error);
 

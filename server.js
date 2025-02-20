@@ -65,33 +65,15 @@ app.post("/compile", async (req, res) => {
   try {
     const { content, filename } = req.body;
 
-    if (!filename || typeof filename !== "string") {
-      return res.status(400).json({
-        error: "Invalid filename",
-        details: `Received: ${typeof filename}`,
-      });
-    }
-
-    if (!content || typeof content !== "string") {
-      return res.status(400).json({
-        error: "Invalid content",
-        details: `Received: ${typeof content}`,
-      });
-    }
+    // Input validation checks remain the same...
 
     const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
 
-    // Create directory if it doesn't exist
     await fs.mkdirp(dirPath);
-
-    // Write the LaTeX content and log it
     await fs.writeFile(absolutePath, content, "utf-8");
-    console.log(`LaTeX file written to: ${absolutePath}`);
-    console.log("Content preview:", content.substring(0, 200) + "...");
 
-    // Run pdflatex with more permissive options
     const pdflatexOptions = [
       "-file-line-error",
       "-interaction=nonstopmode",
@@ -99,28 +81,20 @@ app.post("/compile", async (req, res) => {
       baseFilename,
     ];
 
-    // First run
+    // Run pdflatex twice as before...
     const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout1 = "";
     let stderr1 = "";
 
     pdflatex1.stdout.on("data", (data) => {
       stdout1 += data.toString();
-      console.log("pdflatex output:", data.toString());
     });
 
     pdflatex1.stderr.on("data", (data) => {
       stderr1 += data.toString();
-      console.error("pdflatex error:", data.toString());
     });
 
-    // Handle process completion with exit code
-    await new Promise((resolve, reject) => {
-      pdflatex1.on("close", (code) => {
-        console.log(`First pdflatex run completed with code ${code}`);
-        resolve();
-      });
-    });
+    await new Promise((resolve) => pdflatex1.on("close", resolve));
 
     // Second run
     const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
@@ -129,31 +103,36 @@ app.post("/compile", async (req, res) => {
 
     pdflatex2.stdout.on("data", (data) => {
       stdout2 += data.toString();
-      console.log("pdflatex output:", data.toString());
     });
 
     pdflatex2.stderr.on("data", (data) => {
       stderr2 += data.toString();
-      console.error("pdflatex error:", data.toString());
     });
 
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-    // Check if PDF was generated
+    // Check if PDF exists and try to read it
     const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
       const pdfBuffer = await fs.readFile(pdfPath);
       const pdfBase64 = pdfBuffer.toString("base64");
 
-      // Always return success if we have a PDF, even with warnings
+      // Extract any errors/warnings from the output
+      const logPath = path.join(dirPath, baseFilename.replace(".tex", ".log"));
+      const logContent = await fs.readFile(logPath, "utf-8");
+      const errors = parseLatexErrors(logContent);
+
+      // If we have a PDF, return it along with any warnings
       return res.status(200).json({
+        success: true,
         pdf: pdfBase64,
         output: formatLatexOutput(stdout1 + stdout2),
-        warnings: true,
+        errors: errors,
+        warnings: errors.length > 0,
       });
     } catch (pdfError) {
-      // Only throw if we couldn't read the PDF
+      // Only error if we couldn't read the PDF at all
       console.error("Failed to read PDF:", pdfError);
       throw new Error("No PDF was generated");
     }

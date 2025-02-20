@@ -94,7 +94,6 @@ app.post("/compile", async (req, res) => {
     // Run pdflatex with more permissive options
     const pdflatexOptions = [
       "-interaction=nonstopmode",
-      "-file-line-error",
       "-halt-on-error=n",
       baseFilename,
     ];
@@ -114,7 +113,13 @@ app.post("/compile", async (req, res) => {
       console.error("pdflatex error:", data.toString());
     });
 
-    await new Promise((resolve) => pdflatex1.on("close", resolve));
+    // Handle process completion with exit code
+    await new Promise((resolve, reject) => {
+      pdflatex1.on("close", (code) => {
+        console.log(`First pdflatex run completed with code ${code}`);
+        resolve();
+      });
+    });
 
     // Second run
     const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });

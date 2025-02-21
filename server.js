@@ -67,50 +67,19 @@ function formatLatexOutput(stdout) {
 
 app.post("/compile", async (req, res) => {
   try {
-    const { content, filename, template } = req.body;
+    const { content, filename } = req.body;
 
     // Input validation checks remain the same...
 
-    // Construct path based on template type
-    const templateDir = template || ""; // e.g. 'elsevier-dc'
-    const absolutePath = path.resolve("/opt/latexfiles", templateDir, filename);
-    console.log("absolutePath", absolutePath);
+    const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
+    console.log("absolutePath", absolutePath);
     console.log("dirPath", dirPath);
     console.log("baseFilename", baseFilename);
 
     await fs.mkdirp(dirPath);
     await fs.writeFile(absolutePath, content, "utf-8");
-
-    // Copy template-specific assets if they exist
-    const templateAssetsDir = path.resolve("/opt/latexfiles", templateDir);
-    if (await fs.pathExists(templateAssetsDir)) {
-      // Copy figs directory
-      const figsDir = path.join(templateAssetsDir, "figs");
-      if (await fs.pathExists(figsDir)) {
-        await fs.copy(figsDir, path.join(dirPath, "figs"));
-      }
-
-      // Copy thumbnails directory
-      const thumbnailsDir = path.join(templateAssetsDir, "thumbnails");
-      if (await fs.pathExists(thumbnailsDir)) {
-        await fs.copy(thumbnailsDir, path.join(dirPath, "thumbnails"));
-      }
-
-      // Copy style files
-      const styleFiles = [
-        "cas-common.sty",
-        "cas-dc.cls",
-        "model1-num-names.bst",
-      ];
-      for (const file of styleFiles) {
-        const stylePath = path.join(templateAssetsDir, file);
-        if (await fs.pathExists(stylePath)) {
-          await fs.copy(stylePath, path.join(dirPath, file));
-        }
-      }
-    }
 
     const pdflatexOptions = [
       "-file-line-error",

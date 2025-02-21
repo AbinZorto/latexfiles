@@ -69,8 +69,6 @@ app.post("/compile", async (req, res) => {
   try {
     const { content, filename, bibliography } = req.body;
 
-    // Input validation checks remain the same...
-
     const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
@@ -78,12 +76,14 @@ app.post("/compile", async (req, res) => {
     console.log("dirPath", dirPath);
     console.log("baseFilename", baseFilename);
 
+    // Create directory and write main LaTeX file
     await fs.mkdirp(dirPath);
     await fs.writeFile(absolutePath, content, "utf-8");
 
-    // Write the bibliography file if provided
+    // Write bibliography file if provided
     if (bibliography?.content) {
       const bibPath = path.join(dirPath, bibliography.filename);
+      console.log("Writing bibliography to:", bibPath);
       await fs.writeFile(bibPath, bibliography.content, "utf-8");
     }
 
@@ -94,7 +94,7 @@ app.post("/compile", async (req, res) => {
       baseFilename,
     ];
 
-    // Run pdflatex -> bibtex -> pdflatex -> pdflatex
+    // First pdflatex run
     const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout1 = "";
     let stderr1 = "";
@@ -110,6 +110,7 @@ app.post("/compile", async (req, res) => {
     await new Promise((resolve) => pdflatex1.on("close", resolve));
 
     // Run bibtex if bibliography was provided
+    let bibtexOutput = "";
     if (bibliography?.content) {
       const bibtex = spawn("bibtex", [baseFilename.replace(".tex", "")], {
         cwd: dirPath,
@@ -126,9 +127,10 @@ app.post("/compile", async (req, res) => {
       });
 
       await new Promise((resolve) => bibtex.on("close", resolve));
+      bibtexOutput = bibtexStdout + bibtexStderr;
     }
 
-    // Second run
+    // Second pdflatex run
     const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout2 = "";
     let stderr2 = "";
@@ -143,7 +145,7 @@ app.post("/compile", async (req, res) => {
 
     await new Promise((resolve) => pdflatex2.on("close", resolve));
 
-    // Third run
+    // Third pdflatex run (needed for references)
     const pdflatex3 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
     let stdout3 = "";
     let stderr3 = "";
@@ -170,16 +172,30 @@ app.post("/compile", async (req, res) => {
       const logContent = await fs.readFile(logPath, "utf-8");
       const errors = parseLatexErrors(logContent);
 
+      // Also check for BibTeX-specific errors
+      if (bibliography?.content) {
+        const blgPath = path.join(
+          dirPath,
+          baseFilename.replace(".tex", ".blg")
+        );
+        try {
+          const blgContent = await fs.readFile(blgPath, "utf-8");
+          const bibErrors = parseBibTeXErrors(blgContent);
+          errors.push(...bibErrors);
+        } catch (blgError) {
+          console.warn("Could not read BibTeX log file:", blgError);
+        }
+      }
+
       // If we have a PDF, return it along with any warnings
       return res.status(200).json({
         success: true,
         pdf: pdfBase64,
-        output: formatLatexOutput(stdout1 + stdout2 + stdout3 + bibtexStdout),
+        output: formatLatexOutput(stdout1 + bibtexOutput + stdout2 + stdout3),
         errors: errors,
         warnings: errors.length > 0,
       });
     } catch (pdfError) {
-      // Only error if we couldn't read the PDF at all
       console.error("Failed to read PDF:", pdfError);
       throw new Error("No PDF was generated");
     }
@@ -220,6 +236,35 @@ const parseLatexErrors = (logContent) => {
       details: match[1].trim().replace(/\n\s*/g, " "),
       context: match[0],
     });
+  }
+
+  return errors;
+};
+
+// Add this function to parse BibTeX-specific errors
+const parseBibTeXErrors = (blgContent) => {
+  const errors = [];
+  const lines = blgContent.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Look for warning and error messages
+    if (line.includes("Warning--") || line.startsWith("I was expecting")) {
+      errors.push({
+        type: "Warning",
+        line: null,
+        details: line.trim(),
+        context: line,
+      });
+    } else if (line.includes("error")) {
+      errors.push({
+        type: "Error",
+        line: null,
+        details: line.trim(),
+        context: line,
+      });
+    }
   }
 
   return errors;

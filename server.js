@@ -74,8 +74,11 @@ app.post("/compile", async (req, res) => {
     // Construct path based on template type
     const templateDir = template || ""; // e.g. 'elsevier-dc'
     const absolutePath = path.resolve("/opt/latexfiles", templateDir, filename);
+    console.log("absolutePath", absolutePath);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
+    console.log("dirPath", dirPath);
+    console.log("baseFilename", baseFilename);
 
     await fs.mkdirp(dirPath);
     await fs.writeFile(absolutePath, content, "utf-8");

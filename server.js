@@ -67,86 +67,168 @@ function formatLatexOutput(stdout) {
 
 app.post("/compile", async (req, res) => {
   try {
-    const { content, filename } = req.body;
+    const { content, filename, bibliography } = req.body;
+    console.log("Compile request received:", {
+      filenameReceived: filename,
+      contentLength: content?.length,
+      hasBibliography: !!bibliography,
+    });
 
-    // Input validation checks remain the same...
+    // Input validation checks
+    if (!content || !filename) {
+      console.error("Missing required fields:", {
+        content: !!content,
+        filename: !!filename,
+      });
+      return res.status(400).json({ error: "Missing required fields" });
+    }
 
     const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
-    console.log("absolutePath", absolutePath);
-    console.log("dirPath", dirPath);
-    console.log("baseFilename", baseFilename);
-
-    await fs.mkdirp(dirPath);
-    await fs.writeFile(absolutePath, content, "utf-8");
-
-    const pdflatexOptions = [
-      "-file-line-error",
-      "-interaction=nonstopmode",
-      "-halt-on-error=n",
+    console.log("File paths:", {
+      absolutePath,
+      dirPath,
       baseFilename,
-    ];
-
-    // Run pdflatex twice as before...
-    const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
-    let stdout1 = "";
-    let stderr1 = "";
-
-    pdflatex1.stdout.on("data", (data) => {
-      stdout1 += data.toString();
     });
-
-    pdflatex1.stderr.on("data", (data) => {
-      stderr1 += data.toString();
-    });
-
-    await new Promise((resolve) => pdflatex1.on("close", resolve));
-
-    // Second run
-    const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
-    let stdout2 = "";
-    let stderr2 = "";
-
-    pdflatex2.stdout.on("data", (data) => {
-      stdout2 += data.toString();
-    });
-
-    pdflatex2.stderr.on("data", (data) => {
-      stderr2 += data.toString();
-    });
-
-    await new Promise((resolve) => pdflatex2.on("close", resolve));
-
-    // Check if PDF exists and try to read it
-    const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
 
     try {
-      const pdfBuffer = await fs.readFile(pdfPath);
-      const pdfBase64 = pdfBuffer.toString("base64");
+      await fs.mkdirp(dirPath);
+      await fs.writeFile(absolutePath, content, "utf-8");
+      console.log("LaTeX file written successfully");
 
-      // Extract any errors/warnings from the output
-      const logPath = path.join(dirPath, baseFilename.replace(".tex", ".log"));
-      const logContent = await fs.readFile(logPath, "utf-8");
-      const errors = parseLatexErrors(logContent);
+      if (bibliography?.content) {
+        const bibPath = path.join(dirPath, "references.bib");
+        await fs.writeFile(bibPath, bibliography.content, "utf-8");
+        console.log("Bibliography file written successfully");
+      }
 
-      // If we have a PDF, return it along with any warnings
-      return res.status(200).json({
-        success: true,
-        pdf: pdfBase64,
-        output: formatLatexOutput(stdout1 + stdout2),
-        errors: errors,
-        warnings: errors.length > 0,
+      const pdflatexOptions = [
+        "-file-line-error",
+        "-interaction=nonstopmode",
+        "-halt-on-error=n",
+        baseFilename,
+      ];
+      console.log("pdflatex options:", pdflatexOptions);
+
+      // First pdflatex run
+      console.log("Starting first pdflatex run...");
+      const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      let stdout1 = "";
+      let stderr1 = "";
+
+      pdflatex1.stdout.on("data", (data) => {
+        stdout1 += data.toString();
+        console.log("pdflatex1 stdout:", data.toString());
       });
-    } catch (pdfError) {
-      // Only error if we couldn't read the PDF at all
-      console.error("Failed to read PDF:", pdfError);
-      throw new Error("No PDF was generated");
+
+      pdflatex1.stderr.on("data", (data) => {
+        stderr1 += data.toString();
+        console.error("pdflatex1 stderr:", data.toString());
+      });
+
+      await new Promise((resolve) =>
+        pdflatex1.on("close", (code) => {
+          console.log("First pdflatex run completed with code:", code);
+          resolve();
+        })
+      );
+
+      // Run bibtex if bibliography exists
+      let bibtexOutput = "";
+      if (bibliography?.content) {
+        console.log("Starting bibtex run...");
+        const bibtex = spawn("bibtex", [baseFilename.replace(".tex", "")], {
+          cwd: dirPath,
+        });
+
+        bibtex.stdout.on("data", (data) => {
+          bibtexOutput += data.toString();
+          console.log("bibtex stdout:", data.toString());
+        });
+
+        bibtex.stderr.on("data", (data) => {
+          console.error("bibtex stderr:", data.toString());
+        });
+
+        await new Promise((resolve) =>
+          bibtex.on("close", (code) => {
+            console.log("BibTeX run completed with code:", code);
+            resolve();
+          })
+        );
+      }
+
+      // Second pdflatex run
+      console.log("Starting second pdflatex run...");
+      const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      let stdout2 = "";
+      let stderr2 = "";
+
+      pdflatex2.stdout.on("data", (data) => {
+        stdout2 += data.toString();
+        console.log("pdflatex2 stdout:", data.toString());
+      });
+
+      pdflatex2.stderr.on("data", (data) => {
+        stderr2 += data.toString();
+        console.error("pdflatex2 stderr:", data.toString());
+      });
+
+      await new Promise((resolve) =>
+        pdflatex2.on("close", (code) => {
+          console.log("Second pdflatex run completed with code:", code);
+          resolve();
+        })
+      );
+
+      // Check if PDF exists and try to read it
+      const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
+      console.log("Attempting to read PDF from:", pdfPath);
+
+      try {
+        const pdfBuffer = await fs.readFile(pdfPath);
+        console.log("PDF file read successfully, size:", pdfBuffer.length);
+        const pdfBase64 = pdfBuffer.toString("base64");
+
+        // Extract any errors/warnings from the output
+        const logPath = path.join(
+          dirPath,
+          baseFilename.replace(".tex", ".log")
+        );
+        console.log("Reading log file from:", logPath);
+        const logContent = await fs.readFile(logPath, "utf-8");
+        const errors = parseLatexErrors(logContent);
+        console.log("Parsed LaTeX errors:", errors);
+
+        // If we have a PDF, return it along with any warnings
+        return res.status(200).json({
+          success: true,
+          pdf: pdfBase64,
+          output: formatLatexOutput(stdout1 + stdout2),
+          errors: errors,
+          warnings: errors.length > 0,
+        });
+      } catch (pdfError) {
+        console.error("Failed to read PDF:", pdfError);
+        // Log the directory contents to help debug
+        const dirContents = await fs.readdir(dirPath);
+        console.log("Directory contents:", dirContents);
+        throw new Error(
+          `No PDF was generated. Directory contents: ${dirContents.join(", ")}`
+        );
+      }
+    } catch (error) {
+      console.error("Compilation error:", error);
+      res.status(500).json({
+        error: "PDF compilation failed",
+        details: error.message,
+      });
     }
   } catch (error) {
-    console.error("Compilation error:", error);
+    console.error("Top-level error:", error);
     res.status(500).json({
-      error: "PDF compilation failed",
+      error: "Server error",
       details: error.message,
     });
   }

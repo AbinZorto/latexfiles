@@ -182,6 +182,29 @@ app.post("/compile", async (req, res) => {
         })
       );
 
+      // Third pdflatex run
+      console.log("Starting third pdflatex run...");
+      const pdflatex3 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      let stdout3 = "";
+      let stderr3 = "";
+
+      pdflatex3.stdout.on("data", (data) => {
+        stdout3 += data.toString();
+        console.log("pdflatex3 stdout:", data.toString());
+      });
+
+      pdflatex3.stderr.on("data", (data) => {
+        stderr3 += data.toString();
+        console.error("pdflatex3 stderr:", data.toString());
+      });
+
+      await new Promise((resolve) =>
+        pdflatex3.on("close", (code) => {
+          console.log("Third pdflatex run completed with code:", code);
+          resolve();
+        })
+      );
+
       // Check if PDF exists and try to read it
       const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
       console.log("Attempting to read PDF from:", pdfPath);
@@ -205,7 +228,7 @@ app.post("/compile", async (req, res) => {
         return res.status(200).json({
           success: true,
           pdf: pdfBase64,
-          output: formatLatexOutput(stdout1 + stdout2),
+          output: formatLatexOutput(stdout1 + stdout2 + stdout3),
           errors: errors,
           warnings: errors.length > 0,
         });

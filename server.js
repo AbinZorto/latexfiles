@@ -66,10 +66,12 @@ function formatLatexOutput(stdout) {
 }
 
 app.post("/compile", async (req, res) => {
-  // Initialize stdout variables at the top level so they're available in catch blocks
+  // Initialize all variables at the top level
   let stdout1 = "",
     stdout2 = "",
     stdout3 = "";
+  let errors = [],
+    warnings = false;
 
   try {
     const { content, filename, bibliography } = req.body;
@@ -240,22 +242,44 @@ app.post("/compile", async (req, res) => {
       }
     } catch (error) {
       console.error("Compilation error:", error);
+      // Try to parse errors from available stdout if possible
+      try {
+        const combinedOutput = stdout1 + stdout2 + stdout3;
+        errors = parseLatexErrors(combinedOutput);
+        warnings = errors.some((e) => e.type === "Warning");
+      } catch (parseError) {
+        console.error("Error parsing LaTeX output:", parseError);
+      }
+
       res.status(500).json({
         error: "PDF compilation failed",
         details: error.message,
         output: formatLatexOutput(
           stdout1 + stdout2 + stdout3 || "No compilation output available"
         ),
+        errors: errors,
+        warnings: warnings,
       });
     }
   } catch (error) {
     console.error("Top-level error:", error);
+    // Try to parse errors from available stdout if possible
+    try {
+      const combinedOutput = stdout1 + stdout2 + stdout3;
+      errors = parseLatexErrors(combinedOutput);
+      warnings = errors.some((e) => e.type === "Warning");
+    } catch (parseError) {
+      console.error("Error parsing LaTeX output:", parseError);
+    }
+
     res.status(500).json({
       error: "Server error",
       details: error.message,
       output: formatLatexOutput(
         stdout1 + stdout2 + stdout3 || "No compilation output available"
       ),
+      errors: errors,
+      warnings: warnings,
     });
   }
 });

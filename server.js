@@ -119,7 +119,6 @@ app.post("/compile", async (req, res) => {
 
       pdflatex1.stdout.on("data", (data) => {
         stdout1 += data.toString();
-        console.log("pdflatex1 stdout:", data.toString());
       });
 
       pdflatex1.stderr.on("data", (data) => {
@@ -144,7 +143,6 @@ app.post("/compile", async (req, res) => {
 
         bibtex.stdout.on("data", (data) => {
           bibtexOutput += data.toString();
-          console.log("bibtex stdout:", data.toString());
         });
 
         bibtex.stderr.on("data", (data) => {
@@ -167,7 +165,6 @@ app.post("/compile", async (req, res) => {
 
       pdflatex2.stdout.on("data", (data) => {
         stdout2 += data.toString();
-        console.log("pdflatex2 stdout:", data.toString());
       });
 
       pdflatex2.stderr.on("data", (data) => {
@@ -190,7 +187,6 @@ app.post("/compile", async (req, res) => {
 
       pdflatex3.stdout.on("data", (data) => {
         stdout3 += data.toString();
-        console.log("pdflatex3 stdout:", data.toString());
       });
 
       pdflatex3.stderr.on("data", (data) => {

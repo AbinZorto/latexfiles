@@ -106,7 +106,6 @@ app.post("/compile", async (req, res) => {
       const pdflatexOptions = [
         "-file-line-error",
         "-interaction=nonstopmode",
-        "-halt-on-error=n",
         baseFilename,
       ];
       console.log("pdflatex options:", pdflatexOptions);

@@ -66,6 +66,11 @@ function formatLatexOutput(stdout) {
 }
 
 app.post("/compile", async (req, res) => {
+  // Initialize stdout variables at the top level so they're available in catch blocks
+  let stdout1 = "",
+    stdout2 = "",
+    stdout3 = "";
+
   try {
     const { content, filename, bibliography } = req.body;
     console.log("Compile request received:", {
@@ -113,7 +118,6 @@ app.post("/compile", async (req, res) => {
       // First pdflatex run
       console.log("Starting first pdflatex run...");
       const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
-      let stdout1 = "";
       let stderr1 = "";
 
       pdflatex1.stdout.on("data", (data) => {
@@ -159,7 +163,6 @@ app.post("/compile", async (req, res) => {
       // Second pdflatex run
       console.log("Starting second pdflatex run...");
       const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
-      let stdout2 = "";
       let stderr2 = "";
 
       pdflatex2.stdout.on("data", (data) => {
@@ -181,7 +184,6 @@ app.post("/compile", async (req, res) => {
       // Third pdflatex run
       console.log("Starting third pdflatex run...");
       const pdflatex3 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
-      let stdout3 = "";
       let stderr3 = "";
 
       pdflatex3.stdout.on("data", (data) => {
@@ -241,7 +243,9 @@ app.post("/compile", async (req, res) => {
       res.status(500).json({
         error: "PDF compilation failed",
         details: error.message,
-        output: formatLatexOutput(stdout1 + stdout2 + stdout3),
+        output: formatLatexOutput(
+          stdout1 + stdout2 + stdout3 || "No compilation output available"
+        ),
       });
     }
   } catch (error) {
@@ -249,7 +253,9 @@ app.post("/compile", async (req, res) => {
     res.status(500).json({
       error: "Server error",
       details: error.message,
-      output: formatLatexOutput(stdout1 + stdout2 + stdout3),
+      output: formatLatexOutput(
+        stdout1 + stdout2 + stdout3 || "No compilation output available"
+      ),
     });
   }
 });

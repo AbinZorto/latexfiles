@@ -241,6 +241,7 @@ app.post("/compile", async (req, res) => {
       res.status(500).json({
         error: "PDF compilation failed",
         details: error.message,
+        output: formatLatexOutput(stdout1 + stdout2 + stdout3),
       });
     }
   } catch (error) {
@@ -248,6 +249,7 @@ app.post("/compile", async (req, res) => {
     res.status(500).json({
       error: "Server error",
       details: error.message,
+      output: formatLatexOutput(stdout1 + stdout2 + stdout3),
     });
   }
 });

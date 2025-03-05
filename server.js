@@ -4,7 +4,6 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 const fs = require("fs-extra");
 const path = require("path");
-const fetch = require("node-fetch");
 
 const app = express();
 app.use(
@@ -75,12 +74,11 @@ app.post("/compile", async (req, res) => {
     warnings = false;
 
   try {
-    const { content, filename, bibliography, images } = req.body;
+    const { content, filename, bibliography } = req.body;
     console.log("Compile request received:", {
       filenameReceived: filename,
       contentLength: content?.length,
       hasBibliography: !!bibliography,
-      imageCount: images?.length || 0,
     });
 
     // Input validation checks
@@ -105,97 +103,6 @@ app.post("/compile", async (req, res) => {
       await fs.mkdirp(dirPath);
       await fs.writeFile(absolutePath, content, "utf-8");
       console.log("LaTeX file written successfully");
-
-      // Create images directory if needed
-      const imagesDir = path.join(dirPath, "images");
-      await fs.mkdirp(imagesDir);
-      console.log("Images directory created:", imagesDir);
-
-      // Download and save images if provided
-      if (Array.isArray(images) && images.length > 0) {
-        console.log(`Processing ${images.length} images...`);
-
-        const downloadPromises = images.map(async (image, index) => {
-          try {
-            if (!image.id || !image.url) {
-              console.warn(
-                `Skipping image #${index} with missing id or url:`,
-                image
-              );
-              return;
-            }
-
-            // Create a safe filename from the image ID
-            const safeImageId = image.id.replace(/[^a-zA-Z0-9]/g, "_");
-            const imageExt = getImageExtension(image.url);
-            const imagePath = path.join(imagesDir, `${safeImageId}${imageExt}`);
-
-            console.log(
-              `[${index + 1}/${images.length}] Downloading image: ${image.url}`
-            );
-            console.log(`Target path: ${imagePath}`);
-
-            // Check if file already exists
-            if (await fs.pathExists(imagePath)) {
-              console.log(
-                `Image already exists at ${imagePath}, skipping download`
-              );
-              return;
-            }
-
-            // Download the image with timeout
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-
-            try {
-              const response = await fetch(image.url, {
-                signal: controller.signal,
-                headers: {
-                  "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-                },
-              });
-              clearTimeout(timeout);
-
-              if (!response.ok) {
-                throw new Error(
-                  `Failed to download image: ${response.status} ${response.statusText}`
-                );
-              }
-
-              const buffer = await response.arrayBuffer();
-              await fs.writeFile(imagePath, Buffer.from(buffer));
-              console.log(
-                `Image saved successfully: ${path.basename(imagePath)}`
-              );
-            } catch (fetchError) {
-              clearTimeout(timeout);
-              throw fetchError;
-            }
-          } catch (error) {
-            console.error(
-              `Error downloading image ${image.id || index}:`,
-              error.message
-            );
-            // Continue with other images
-          }
-        });
-
-        // Wait for all downloads to complete, but don't fail if some fail
-        await Promise.allSettled(downloadPromises);
-        console.log("All images processed");
-
-        // List all files in the images directory to verify
-        try {
-          const files = await fs.readdir(imagesDir);
-          console.log(
-            `Images directory contains ${files.length} files:`,
-            files
-          );
-        } catch (error) {
-          console.error("Error listing image directory:", error);
-        }
-      }
 
       if (bibliography?.content) {
         const bibPath = path.join(dirPath, "references.bib");
@@ -409,21 +316,6 @@ const parseLatexErrors = (logContent) => {
 
   return errors;
 };
-
-// Helper function to get image extension from URL or content type
-function getImageExtension(url) {
-  // Try to extract extension from URL
-  const urlMatch = url.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
-  if (
-    urlMatch &&
-    ["jpg", "jpeg", "png", "gif", "pdf"].includes(urlMatch[1].toLowerCase())
-  ) {
-    return `.${urlMatch[1].toLowerCase()}`;
-  }
-
-  // Default to .jpg if we can't determine the extension
-  return ".jpg";
-}
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`LaTeX service running on port ${PORT}`));

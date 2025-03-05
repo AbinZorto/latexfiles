@@ -115,10 +115,13 @@ app.post("/compile", async (req, res) => {
       if (Array.isArray(images) && images.length > 0) {
         console.log(`Processing ${images.length} images...`);
 
-        const downloadPromises = images.map(async (image) => {
+        const downloadPromises = images.map(async (image, index) => {
           try {
             if (!image.id || !image.url) {
-              console.warn("Skipping image with missing id or url:", image);
+              console.warn(
+                `Skipping image #${index} with missing id or url:`,
+                image
+              );
               return;
             }
 
@@ -127,26 +130,71 @@ app.post("/compile", async (req, res) => {
             const imageExt = getImageExtension(image.url);
             const imagePath = path.join(imagesDir, `${safeImageId}${imageExt}`);
 
-            console.log(`Downloading image: ${image.url} to ${imagePath}`);
+            console.log(
+              `[${index + 1}/${images.length}] Downloading image: ${image.url}`
+            );
+            console.log(`Target path: ${imagePath}`);
 
-            // Download the image
-            const response = await fetch(image.url);
-            if (!response.ok) {
-              throw new Error(
-                `Failed to download image: ${response.status} ${response.statusText}`
+            // Check if file already exists
+            if (await fs.pathExists(imagePath)) {
+              console.log(
+                `Image already exists at ${imagePath}, skipping download`
               );
+              return;
             }
 
-            const buffer = await response.arrayBuffer();
-            await fs.writeFile(imagePath, Buffer.from(buffer));
-            console.log(`Image saved: ${imagePath}`);
+            // Download the image with timeout
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+            try {
+              const response = await fetch(image.url, {
+                signal: controller.signal,
+                headers: {
+                  "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                },
+              });
+              clearTimeout(timeout);
+
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to download image: ${response.status} ${response.statusText}`
+                );
+              }
+
+              const buffer = await response.arrayBuffer();
+              await fs.writeFile(imagePath, Buffer.from(buffer));
+              console.log(
+                `Image saved successfully: ${path.basename(imagePath)}`
+              );
+            } catch (fetchError) {
+              clearTimeout(timeout);
+              throw fetchError;
+            }
           } catch (error) {
-            console.error(`Error downloading image ${image.id}:`, error);
+            console.error(
+              `Error downloading image ${image.id || index}:`,
+              error.message
+            );
+            // Continue with other images
           }
         });
 
-        await Promise.all(downloadPromises);
+        // Wait for all downloads to complete, but don't fail if some fail
+        await Promise.allSettled(downloadPromises);
         console.log("All images processed");
+
+        // List all files in the images directory to verify
+        try {
+          const files = await fs.readdir(imagesDir);
+          console.log(
+            `Images directory contains ${files.length} files:`,
+            files
+          );
+        } catch (error) {
+          console.error("Error listing image directory:", error);
+        }
       }
 
       if (bibliography?.content) {

@@ -81,43 +81,130 @@ async function downloadImages(imageReferences, targetDir) {
   console.log(
     `Downloading ${Object.keys(imageReferences).length} images to ${targetDir}`
   );
+  console.log("Image references:", JSON.stringify(imageReferences, null, 2));
 
   // Create images directory
   const imagesDir = path.join(targetDir, "images");
   await fs.mkdirp(imagesDir);
+  console.log(`Created images directory at: ${imagesDir}`);
 
   // Download each image in parallel
   const downloadPromises = Object.values(imageReferences).map(async (image) => {
     const { id, url, filename } = image;
-    const outputPath = path.join(imagesDir, filename);
+    const outputPath = path.join(imagesDir, filename || `${id}.jpg`);
+
+    console.log(`Starting download for image ${id}:`);
+    console.log(`  URL: ${url}`);
+    console.log(`  Target path: ${outputPath}`);
 
     try {
-      console.log(`Downloading image ${id} from ${url}`);
+      // Log the request details
+      console.log(`Sending HTTP request for image ${id}...`);
+
+      const startTime = Date.now();
       const response = await axios({
         method: "GET",
         url: url,
         responseType: "arraybuffer",
         timeout: 30000, // 30 second timeout
         maxContentLength: 10 * 1024 * 1024, // 10MB limit
+        validateStatus: false, // Don't throw on any status code
       });
+      const duration = Date.now() - startTime;
 
+      // Log the response details
+      console.log(`Response received for image ${id} after ${duration}ms:`);
+      console.log(`  Status: ${response.status} ${response.statusText}`);
+      console.log(`  Content Type: ${response.headers["content-type"]}`);
+      console.log(`  Content Length: ${response.data?.length || 0} bytes`);
+
+      // Check for valid image response
+      if (response.status !== 200) {
+        throw new Error(
+          `HTTP status ${response.status}: ${response.statusText}`
+        );
+      }
+
+      // Check if we actually got image data
+      const contentType = response.headers["content-type"];
+      if (!contentType || !contentType.startsWith("image/")) {
+        // If not an image, write the response to a log file for inspection
+        const responseText = response.data.toString().substring(0, 1000); // First 1000 chars
+        console.error(`Non-image content type received: ${contentType}`);
+        console.error(`Response preview: ${responseText}`);
+
+        const logFilePath = path.join(targetDir, `image_${id}_error.log`);
+        await fs.writeFile(
+          logFilePath,
+          `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${contentType}\n\nResponse:\n${responseText}`
+        );
+        console.log(`Wrote error details to ${logFilePath}`);
+
+        throw new Error(`Received non-image content type: ${contentType}`);
+      }
+
+      // Write the image data to file
       await fs.writeFile(outputPath, response.data);
-      console.log(`Successfully downloaded image to ${outputPath}`);
-      return { id, success: true, path: outputPath };
-    } catch (error) {
-      console.error(
-        `Failed to download image ${id} from ${url}: ${error.message}`
+      console.log(
+        `Successfully downloaded image ${id} to ${outputPath} (${response.data.length} bytes)`
       );
+
+      return {
+        id,
+        success: true,
+        path: outputPath,
+        size: response.data.length,
+      };
+    } catch (error) {
+      console.error(`Failed to download image ${id} from ${url}:`);
+      console.error(`  Error: ${error.message}`);
+
+      if (error.response) {
+        console.error(`  Status: ${error.response.status}`);
+        console.error(`  Headers: ${JSON.stringify(error.response.headers)}`);
+        // Log the first part of the response if it's text
+        if (error.response.data) {
+          try {
+            const preview = Buffer.isBuffer(error.response.data)
+              ? error.response.data.toString("utf8").substring(0, 200)
+              : JSON.stringify(error.response.data).substring(0, 200);
+            console.error(`  Response preview: ${preview}...`);
+          } catch (e) {
+            console.error("  Cannot preview response data");
+          }
+        }
+      } else if (error.request) {
+        console.error("  No response received from server");
+      }
+
       return { id, success: false, error: error.message };
     }
   });
 
   // Wait for all downloads to complete
-  await Promise.allSettled(downloadPromises);
-  console.log("Image downloads completed");
+  const results = await Promise.allSettled(downloadPromises);
+
+  // Summarize results
+  const successful = results.filter(
+    (r) => r.status === "fulfilled" && r.value.success
+  ).length;
+  const failed = results.filter(
+    (r) =>
+      r.status === "rejected" || (r.status === "fulfilled" && !r.value.success)
+  ).length;
+
+  console.log(
+    `Image downloads completed: ${successful} successful, ${failed} failed`
+  );
+  return { successful, failed };
 }
 
 app.post("/compile", async (req, res) => {
+  console.log("\n===== NEW COMPILATION REQUEST =====");
+  console.log("Request received at:", new Date().toISOString());
+  console.log("Request IP:", req.ip);
+  console.log("Request headers:", JSON.stringify(req.headers, null, 2));
+
   // Initialize all variables at the top level
   let stdout1 = "",
     stdout2 = "",
@@ -127,12 +214,27 @@ app.post("/compile", async (req, res) => {
 
   try {
     const { content, filename, bibliography, imageReferences } = req.body;
-    console.log("Compile request received:", {
-      filenameReceived: filename,
-      contentLength: content?.length,
-      hasBibliography: !!bibliography,
-      imageCount: imageReferences ? Object.keys(imageReferences).length : 0,
-    });
+
+    // Log request details
+    console.log("Compile request details:");
+    console.log(`  Filename: ${filename}`);
+    console.log(`  Content length: ${content?.length || 0} characters`);
+    console.log(`  Has bibliography: ${!!bibliography}`);
+    console.log(
+      `  Image references: ${imageReferences ? Object.keys(imageReferences).length : 0}`
+    );
+
+    // Print the first 500 characters of the content for debugging
+    if (content) {
+      console.log(`  Content preview: ${content.substring(0, 500)}...`);
+    }
+
+    // Log image reference keys
+    if (imageReferences) {
+      console.log(
+        `  Image reference keys: ${Object.keys(imageReferences).join(", ")}`
+      );
+    }
 
     // Input validation checks
     if (!content || !filename) {
@@ -146,23 +248,36 @@ app.post("/compile", async (req, res) => {
     const absolutePath = path.resolve("/opt/latexfiles", filename);
     const dirPath = path.dirname(absolutePath);
     const baseFilename = path.basename(filename);
-    console.log("File paths:", {
-      absolutePath,
-      dirPath,
-      baseFilename,
-    });
+
+    console.log("File paths:");
+    console.log(`  Absolute path: ${absolutePath}`);
+    console.log(`  Directory path: ${dirPath}`);
+    console.log(`  Base filename: ${baseFilename}`);
 
     try {
       // Create the directory structure
+      console.log(`Creating directory: ${dirPath}`);
       await fs.mkdirp(dirPath);
 
       // Write the LaTeX content to file
+      console.log(`Writing LaTeX file to: ${absolutePath}`);
       await fs.writeFile(absolutePath, content, "utf-8");
       console.log("LaTeX file written successfully");
+
+      // Check if the file was actually written
+      const stats = await fs.stat(absolutePath);
+      console.log(`LaTeX file stats: ${JSON.stringify(stats)}`);
+
+      // List directory contents for verification
+      const dirContents = await fs.readdir(dirPath);
+      console.log(
+        `Directory contents after writing LaTeX: ${dirContents.join(", ")}`
+      );
 
       // Handle bibliography if present
       if (bibliography?.content) {
         const bibPath = path.join(dirPath, "references.bib");
+        console.log(`Writing bibliography to: ${bibPath}`);
         await fs.writeFile(bibPath, bibliography.content, "utf-8");
         console.log("Bibliography file written successfully");
       }
@@ -172,7 +287,19 @@ app.post("/compile", async (req, res) => {
         console.log(
           `Processing ${Object.keys(imageReferences).length} image references`
         );
-        await downloadImages(imageReferences, dirPath);
+        const downloadResult = await downloadImages(imageReferences, dirPath);
+        console.log(
+          `Image download summary: ${JSON.stringify(downloadResult)}`
+        );
+
+        // Check images directory afterwards
+        const imagesDir = path.join(dirPath, "images");
+        if (await fs.pathExists(imagesDir)) {
+          const imageFiles = await fs.readdir(imagesDir);
+          console.log(`Images directory contains: ${imageFiles.join(", ")}`);
+        } else {
+          console.warn(`Images directory not created at ${imagesDir}`);
+        }
       }
 
       const pdflatexOptions = [
@@ -292,10 +419,21 @@ app.post("/compile", async (req, res) => {
       }
 
       // Check if PDF exists and try to read it
-      const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));
-      console.log("Attempting to read PDF from:", pdfPath);
-
       try {
+        const pdfPath = path.join(
+          dirPath,
+          baseFilename.replace(".tex", ".pdf")
+        );
+        console.log("Attempting to read PDF from:", pdfPath);
+
+        // Check if file exists before reading
+        const pdfExists = await fs.pathExists(pdfPath);
+        console.log(`PDF file exists: ${pdfExists}`);
+
+        if (!pdfExists) {
+          throw new Error("PDF file not found at expected path");
+        }
+
         const pdfBuffer = await fs.readFile(pdfPath);
         console.log("PDF file read successfully, size:", pdfBuffer.length);
         const pdfBase64 = pdfBuffer.toString("base64");
@@ -320,15 +458,33 @@ app.post("/compile", async (req, res) => {
         });
       } catch (pdfError) {
         console.error("Failed to read PDF:", pdfError);
-        // Log the directory contents to help debug
-        const dirContents = await fs.readdir(dirPath);
-        console.log("Directory contents:", dirContents);
+        console.error("Error stack:", pdfError.stack);
+
+        // List directory contents to help debug
+        try {
+          const dirContents = await fs.readdir(dirPath);
+          console.log("Directory contents:", dirContents);
+
+          // Check for log file
+          const logPath = path.join(
+            dirPath,
+            baseFilename.replace(".tex", ".log")
+          );
+          if (await fs.pathExists(logPath)) {
+            const logTail = await fs.readFile(logPath, "utf8");
+            console.log("Last 1000 characters of log:", logTail.slice(-1000));
+          }
+        } catch (listError) {
+          console.error("Error listing directory:", listError);
+        }
+
         throw new Error(
-          `No PDF was generated. Directory contents: ${dirContents.join(", ")}`
+          `No PDF was generated. Directory contents: ${(await fs.readdir(dirPath)).join(", ")}`
         );
       }
     } catch (error) {
       console.error("Compilation error:", error);
+      console.error("Error stack:", error.stack);
       // Try to parse errors from available stdout if possible
       try {
         const combinedOutput = stdout1 + stdout2 + stdout3;
@@ -350,6 +506,7 @@ app.post("/compile", async (req, res) => {
     }
   } catch (error) {
     console.error("Top-level error:", error);
+    console.error("Error stack:", error.stack);
     // Try to parse errors from available stdout if possible
     try {
       const combinedOutput = stdout1 + stdout2 + stdout3;
@@ -368,6 +525,8 @@ app.post("/compile", async (req, res) => {
       errors: errors,
       warnings: warnings,
     });
+  } finally {
+    console.log("===== COMPILATION REQUEST COMPLETED =====\n");
   }
 });
 
@@ -403,6 +562,33 @@ const parseLatexErrors = (logContent) => {
 
   return errors;
 };
+
+// Error handling middleware to catch unhandled errors
+app.use((err, req, res, next) => {
+  console.error("Unhandled error in Express:", err);
+  console.error("Error stack:", err.stack);
+
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: "Unhandled server error",
+      message: err.message,
+      details: err.toString(),
+    });
+  }
+});
+
+// Add graceful shutdown to log errors
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+  console.error(err.stack);
+  // Keep the process running, but log the error
+});
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise);
+  console.error("Reason:", reason);
+  // Keep the process running, but log the error
+});
 
 const PORT = process.env.PORT || 3002;
 app.listen(PORT, () => console.log(`LaTeX service running on port ${PORT}`));

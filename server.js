@@ -67,39 +67,57 @@ function formatLatexOutput(stdout) {
 }
 
 /**
- * Downloads images from URLs to a local directory for LaTeX compilation
+ * Downloads or extracts images for LaTeX compilation
  * @param {Object} imageReferences - Map of image references with URLs and file info
  * @param {string} targetDir - Directory to save downloaded images
- * @returns {Promise<void>}
+ * @returns {Promise<Object>} - Results of image processing
  */
 async function downloadImages(imageReferences, targetDir) {
   if (!imageReferences || Object.keys(imageReferences).length === 0) {
     console.log("No image references to download");
-    return;
+    return { successful: 0, failed: 0 };
   }
 
   console.log(
-    `Downloading ${Object.keys(imageReferences).length} images to ${targetDir}`
+    `Processing ${Object.keys(imageReferences).length} images for ${targetDir}`
   );
-  console.log("Image references:", JSON.stringify(imageReferences, null, 2));
 
   // Create images directory
   const imagesDir = path.join(targetDir, "images");
   await fs.mkdirp(imagesDir);
   console.log(`Created images directory at: ${imagesDir}`);
 
-  // Download each image in parallel
-  const downloadPromises = Object.values(imageReferences).map(async (image) => {
-    const { id, url, filename } = image;
+  // Process each image (either from URL or base64)
+  const processPromises = Object.values(imageReferences).map(async (image) => {
+    const { id, url, filename, base64Data, contentType } = image;
     const outputPath = path.join(imagesDir, filename || `${id}.jpg`);
 
-    console.log(`Starting download for image ${id}:`);
-    console.log(`  URL: ${url}`);
-    console.log(`  Target path: ${outputPath}`);
-
     try {
-      // Log the request details
-      console.log(`Sending HTTP request for image ${id}...`);
+      // If we have base64 data, use that instead of downloading
+      if (base64Data) {
+        console.log(
+          `Using provided base64 data for image ${id} (${base64Data.length} bytes)`
+        );
+
+        // Decode base64 to buffer
+        const imageBuffer = Buffer.from(base64Data, "base64");
+
+        // Write to file
+        await fs.writeFile(outputPath, imageBuffer);
+        console.log(
+          `Successfully saved base64 image to ${outputPath} (${imageBuffer.length} bytes)`
+        );
+        return {
+          id,
+          success: true,
+          path: outputPath,
+          size: imageBuffer.length,
+        };
+      }
+
+      // Otherwise try URL download as before
+      console.log(`Downloading image ${id} from URL: ${url}`);
+      console.log(`Target path: ${outputPath}`);
 
       const startTime = Date.now();
       const response = await axios({
@@ -126,7 +144,6 @@ async function downloadImages(imageReferences, targetDir) {
       }
 
       // Check if we actually got image data
-      const contentType = response.headers["content-type"];
       if (!contentType || !contentType.startsWith("image/")) {
         // If not an image, write the response to a log file for inspection
         const responseText = response.data.toString().substring(0, 1000); // First 1000 chars
@@ -182,7 +199,7 @@ async function downloadImages(imageReferences, targetDir) {
   });
 
   // Wait for all downloads to complete
-  const results = await Promise.allSettled(downloadPromises);
+  const results = await Promise.allSettled(processPromises);
 
   // Summarize results
   const successful = results.filter(

@@ -4,6 +4,7 @@ const cors = require("cors");
 const { spawn } = require("child_process");
 const fs = require("fs-extra");
 const path = require("path");
+const axios = require("axios");
 
 const app = express();
 app.use(
@@ -65,6 +66,57 @@ function formatLatexOutput(stdout) {
   return formatted;
 }
 
+/**
+ * Downloads images from URLs to a local directory for LaTeX compilation
+ * @param {Object} imageReferences - Map of image references with URLs and file info
+ * @param {string} targetDir - Directory to save downloaded images
+ * @returns {Promise<void>}
+ */
+async function downloadImages(imageReferences, targetDir) {
+  if (!imageReferences || Object.keys(imageReferences).length === 0) {
+    console.log("No image references to download");
+    return;
+  }
+
+  console.log(
+    `Downloading ${Object.keys(imageReferences).length} images to ${targetDir}`
+  );
+
+  // Create images directory
+  const imagesDir = path.join(targetDir, "images");
+  await fs.mkdirp(imagesDir);
+
+  // Download each image in parallel
+  const downloadPromises = Object.values(imageReferences).map(async (image) => {
+    const { id, url, filename } = image;
+    const outputPath = path.join(imagesDir, filename);
+
+    try {
+      console.log(`Downloading image ${id} from ${url}`);
+      const response = await axios({
+        method: "GET",
+        url: url,
+        responseType: "arraybuffer",
+        timeout: 30000, // 30 second timeout
+        maxContentLength: 10 * 1024 * 1024, // 10MB limit
+      });
+
+      await fs.writeFile(outputPath, response.data);
+      console.log(`Successfully downloaded image to ${outputPath}`);
+      return { id, success: true, path: outputPath };
+    } catch (error) {
+      console.error(
+        `Failed to download image ${id} from ${url}: ${error.message}`
+      );
+      return { id, success: false, error: error.message };
+    }
+  });
+
+  // Wait for all downloads to complete
+  await Promise.allSettled(downloadPromises);
+  console.log("Image downloads completed");
+}
+
 app.post("/compile", async (req, res) => {
   // Initialize all variables at the top level
   let stdout1 = "",
@@ -74,11 +126,12 @@ app.post("/compile", async (req, res) => {
     warnings = false;
 
   try {
-    const { content, filename, bibliography } = req.body;
+    const { content, filename, bibliography, imageReferences } = req.body;
     console.log("Compile request received:", {
       filenameReceived: filename,
       contentLength: content?.length,
       hasBibliography: !!bibliography,
+      imageCount: imageReferences ? Object.keys(imageReferences).length : 0,
     });
 
     // Input validation checks
@@ -100,14 +153,26 @@ app.post("/compile", async (req, res) => {
     });
 
     try {
+      // Create the directory structure
       await fs.mkdirp(dirPath);
+
+      // Write the LaTeX content to file
       await fs.writeFile(absolutePath, content, "utf-8");
       console.log("LaTeX file written successfully");
 
+      // Handle bibliography if present
       if (bibliography?.content) {
         const bibPath = path.join(dirPath, "references.bib");
         await fs.writeFile(bibPath, bibliography.content, "utf-8");
         console.log("Bibliography file written successfully");
+      }
+
+      // Download images if present
+      if (imageReferences && Object.keys(imageReferences).length > 0) {
+        console.log(
+          `Processing ${Object.keys(imageReferences).length} image references`
+        );
+        await downloadImages(imageReferences, dirPath);
       }
 
       const pdflatexOptions = [
@@ -203,6 +268,28 @@ app.post("/compile", async (req, res) => {
           resolve();
         })
       );
+
+      // After successful compilation, clean up downloaded images to save space
+      if (imageReferences && Object.keys(imageReferences).length > 0) {
+        try {
+          const imagesDir = path.join(dirPath, "images");
+          // Only remove the images directory if PDF was successfully generated
+          const pdfPath = path.join(
+            dirPath,
+            baseFilename.replace(".tex", ".pdf")
+          );
+          if (
+            (await fs.pathExists(pdfPath)) &&
+            (await fs.pathExists(imagesDir))
+          ) {
+            await fs.remove(imagesDir);
+            console.log(`Cleaned up images directory: ${imagesDir}`);
+          }
+        } catch (cleanupError) {
+          console.warn(`Error cleaning up images: ${cleanupError.message}`);
+          // Don't fail the request due to cleanup errors
+        }
+      }
 
       // Check if PDF exists and try to read it
       const pdfPath = path.join(dirPath, baseFilename.replace(".tex", ".pdf"));

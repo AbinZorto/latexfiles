@@ -87,154 +87,183 @@ async function downloadImages(imageReferences, targetDir) {
   await fs.mkdirp(imagesDir);
   console.log(`Created images directory at: ${imagesDir}`);
 
+  // Log all image references for debugging
+  console.log(
+    "Image references to process:",
+    Object.entries(imageReferences)
+      .map(([id, img]) => `${id} -> ${img.filename || "unnamed"}`)
+      .join(", ")
+  );
+
   // Process each image (either from URL or base64)
-  const processPromises = Object.values(imageReferences).map(async (image) => {
-    const {
-      id,
-      url,
-      filename,
-      base64Data,
-      contentType,
-      originalSize,
-      compressedSize,
-    } = image;
-    const outputPath = path.join(imagesDir, filename || `${id}.jpg`);
+  const processPromises = Object.entries(imageReferences).map(
+    async ([key, image]) => {
+      const {
+        id,
+        url,
+        filename,
+        base64Data,
+        contentType,
+        originalSize,
+        compressedSize,
+      } = image;
 
-    try {
-      // If we have base64 data, use that instead of downloading
-      if (base64Data) {
-        console.log(
-          `Using provided base64 data for image ${id} (${base64Data.length} bytes)`
-        );
+      // Ensure we have a valid filename that matches the key exactly
+      const safeKey = key.replace(/[^a-zA-Z0-9]/g, "_");
+      const outputFilename = filename || `${safeKey}.jpg`;
+      const outputPath = path.join(imagesDir, outputFilename);
 
-        // Log compression stats if available
-        if (originalSize && compressedSize) {
-          console.log(
-            `Image was compressed client-side from ${originalSize} to ${compressedSize} bytes`
-          );
-        }
-
-        try {
-          // Decode base64 to buffer
-          const imageBuffer = Buffer.from(base64Data, "base64");
-
-          // Check if the buffer is valid
-          if (imageBuffer.length === 0) {
-            throw new Error("Empty buffer after base64 decoding");
-          }
-
-          // Write to file
-          await fs.writeFile(outputPath, imageBuffer);
-          console.log(
-            `Successfully saved base64 image to ${outputPath} (${imageBuffer.length} bytes)`
-          );
-          return {
-            id,
-            success: true,
-            path: outputPath,
-            size: imageBuffer.length,
-          };
-        } catch (decodeError) {
-          console.error(
-            `Error decoding base64 data for image ${id}:`,
-            decodeError
-          );
-          throw new Error(
-            `Failed to decode base64 data: ${decodeError.message}`
-          );
-        }
-      }
-
-      // Otherwise try URL download as before
-      console.log(`Downloading image ${id} from URL: ${url}`);
-      console.log(`Target path: ${outputPath}`);
-
-      const startTime = Date.now();
-      const response = await axios({
-        method: "GET",
-        url: url,
-        responseType: "arraybuffer",
-        timeout: 30000, // 30 second timeout
-        maxContentLength: 10 * 1024 * 1024, // 10MB limit
-        validateStatus: false, // Don't throw on any status code
-      });
-      const duration = Date.now() - startTime;
-
-      // Log the response details
-      console.log(`Response received for image ${id} after ${duration}ms:`);
-      console.log(`  Status: ${response.status} ${response.statusText}`);
-      console.log(`  Content Type: ${response.headers["content-type"]}`);
-      console.log(`  Content Length: ${response.data?.length || 0} bytes`);
-
-      // Check for valid image response
-      if (response.status !== 200) {
-        throw new Error(
-          `HTTP status ${response.status}: ${response.statusText}`
-        );
-      }
-
-      // Check if we actually got image data
-      const responseContentType = response.headers["content-type"];
-      if (!responseContentType || !responseContentType.startsWith("image/")) {
-        // If not an image, write the response to a log file for inspection
-        const responseText = response.data.toString().substring(0, 1000); // First 1000 chars
-        console.error(
-          `Non-image content type received: ${responseContentType}`
-        );
-        console.error(`Response preview: ${responseText}`);
-
-        const logFilePath = path.join(targetDir, `image_${id}_error.log`);
-        await fs.writeFile(
-          logFilePath,
-          `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${responseContentType}\n\nResponse:\n${responseText}`
-        );
-        console.log(`Wrote error details to ${logFilePath}`);
-
-        throw new Error(
-          `Received non-image content type: ${responseContentType}`
-        );
-      }
-
-      // Write the image data to file
-      await fs.writeFile(outputPath, response.data);
       console.log(
-        `Successfully saved image ${id} to ${outputPath} (${response.data.length} bytes)`
+        `Processing image ${id} (key: ${key}) with target path: ${outputPath}`
       );
 
-      return {
-        id,
-        success: true,
-        path: outputPath,
-        size: response.data.length,
-      };
-    } catch (error) {
-      console.error(`Failed to process image ${id}:`);
-      console.error(`  Error: ${error.message}`);
+      try {
+        // If we have base64 data, use that instead of downloading
+        if (base64Data) {
+          console.log(
+            `Using provided base64 data for image ${id} (${base64Data.length} bytes)`
+          );
 
-      if (error.response) {
-        console.error(`  Status: ${error.response.status}`);
-        console.error(`  Headers: ${JSON.stringify(error.response.headers)}`);
-        // Log the first part of the response if it's text
-        if (error.response.data) {
           try {
-            const preview = Buffer.isBuffer(error.response.data)
-              ? error.response.data.toString("utf8").substring(0, 200)
-              : JSON.stringify(error.response.data).substring(0, 200);
-            console.error(`  Response preview: ${preview}...`);
-          } catch (e) {
-            console.error("  Cannot preview response data");
+            // Decode base64 to buffer
+            const imageBuffer = Buffer.from(base64Data, "base64");
+
+            // Check if the buffer is valid
+            if (imageBuffer.length === 0) {
+              throw new Error("Empty buffer after base64 decoding");
+            }
+
+            // Write to file
+            await fs.writeFile(outputPath, imageBuffer);
+            console.log(
+              `Successfully saved base64 image to ${outputPath} (${imageBuffer.length} bytes)`
+            );
+
+            // Verify the file was written
+            const fileExists = await fs.pathExists(outputPath);
+            const fileSize = fileExists ? (await fs.stat(outputPath)).size : 0;
+            console.log(
+              `File verification: exists=${fileExists}, size=${fileSize} bytes`
+            );
+
+            return {
+              id,
+              key,
+              success: true,
+              path: outputPath,
+              size: imageBuffer.length,
+            };
+          } catch (decodeError) {
+            console.error(
+              `Error decoding base64 data for image ${id}:`,
+              decodeError
+            );
+            throw new Error(
+              `Failed to decode base64 data: ${decodeError.message}`
+            );
           }
         }
-      } else if (error.request) {
-        console.error("  No response received from server");
-      }
 
-      return { id, success: false, error: error.message };
+        // Otherwise try URL download as before
+        console.log(`Downloading image ${id} from URL: ${url}`);
+        console.log(`Target path: ${outputPath}`);
+
+        const startTime = Date.now();
+        const response = await axios({
+          method: "GET",
+          url: url,
+          responseType: "arraybuffer",
+          timeout: 30000, // 30 second timeout
+          maxContentLength: 10 * 1024 * 1024, // 10MB limit
+          validateStatus: false, // Don't throw on any status code
+        });
+        const duration = Date.now() - startTime;
+
+        // Log the response details
+        console.log(`Response received for image ${id} after ${duration}ms:`);
+        console.log(`  Status: ${response.status} ${response.statusText}`);
+        console.log(`  Content Type: ${response.headers["content-type"]}`);
+        console.log(`  Content Length: ${response.data?.length || 0} bytes`);
+
+        // Check for valid image response
+        if (response.status !== 200) {
+          throw new Error(
+            `HTTP status ${response.status}: ${response.statusText}`
+          );
+        }
+
+        // Check if we actually got image data
+        const responseContentType = response.headers["content-type"];
+        if (!responseContentType || !responseContentType.startsWith("image/")) {
+          // If not an image, write the response to a log file for inspection
+          const responseText = response.data.toString().substring(0, 1000); // First 1000 chars
+          console.error(
+            `Non-image content type received: ${responseContentType}`
+          );
+          console.error(`Response preview: ${responseText}`);
+
+          const logFilePath = path.join(targetDir, `image_${id}_error.log`);
+          await fs.writeFile(
+            logFilePath,
+            `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${responseContentType}\n\nResponse:\n${responseText}`
+          );
+          console.log(`Wrote error details to ${logFilePath}`);
+
+          throw new Error(
+            `Received non-image content type: ${responseContentType}`
+          );
+        }
+
+        // Write the image data to file
+        await fs.writeFile(outputPath, response.data);
+        console.log(
+          `Successfully saved image ${id} to ${outputPath} (${response.data.length} bytes)`
+        );
+
+        return {
+          id,
+          key,
+          success: true,
+          path: outputPath,
+          size: response.data.length,
+        };
+      } catch (error) {
+        console.error(`Failed to process image ${id} (key: ${key}):`);
+        console.error(`  Error: ${error.message}`);
+
+        if (error.response) {
+          console.error(`  Status: ${error.response.status}`);
+          console.error(`  Headers: ${JSON.stringify(error.response.headers)}`);
+          // Log the first part of the response if it's text
+          if (error.response.data) {
+            try {
+              const preview = Buffer.isBuffer(error.response.data)
+                ? error.response.data.toString("utf8").substring(0, 200)
+                : JSON.stringify(error.response.data).substring(0, 200);
+              console.error(`  Response preview: ${preview}...`);
+            } catch (e) {
+              console.error("  Cannot preview response data");
+            }
+          }
+        } else if (error.request) {
+          console.error("  No response received from server");
+        }
+
+        return { id, key, success: false, error: error.message };
+      }
     }
-  });
+  );
 
   // Wait for all downloads to complete
   const results = await Promise.allSettled(processPromises);
+
+  // List all files in the images directory to verify
+  try {
+    const imageFiles = await fs.readdir(imagesDir);
+    console.log(`Images directory now contains: ${imageFiles.join(", ")}`);
+  } catch (err) {
+    console.error(`Error listing images directory: ${err.message}`);
+  }
 
   // Summarize results
   const successful = results.filter(

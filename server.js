@@ -88,6 +88,14 @@ async function downloadImages(imageReferences, targetDir) {
   await fs.mkdirp(imagesDir);
   console.log(`Created images directory at: ${imagesDir}`);
 
+  // Log all image references for debugging
+  console.log(
+    "Image references to process:",
+    Object.entries(imageReferences)
+      .map(([id, img]) => `${id} -> ${img.filename || "unnamed"}`)
+      .join(", ")
+  );
+
   // Process each image (either from URL or base64)
   const processPromises = Object.values(imageReferences).map(async (image) => {
     const {
@@ -99,7 +107,12 @@ async function downloadImages(imageReferences, targetDir) {
       originalSize,
       compressedSize,
     } = image;
-    const outputPath = path.join(imagesDir, filename || `${id}.jpg`);
+
+    // Ensure we have a valid filename
+    const outputFilename = filename || `${id}.jpg`;
+    const outputPath = path.join(imagesDir, outputFilename);
+
+    console.log(`Processing image ${id} with target path: ${outputPath}`);
 
     try {
       // If we have base64 data, use that instead of downloading
@@ -107,13 +120,6 @@ async function downloadImages(imageReferences, targetDir) {
         console.log(
           `Using provided base64 data for image ${id} (${base64Data.length} bytes)`
         );
-
-        // Log compression stats if available
-        if (originalSize && compressedSize) {
-          console.log(
-            `Image was compressed client-side from ${originalSize} to ${compressedSize} bytes`
-          );
-        }
 
         try {
           // Decode base64 to buffer
@@ -129,6 +135,14 @@ async function downloadImages(imageReferences, targetDir) {
           console.log(
             `Successfully saved base64 image to ${outputPath} (${imageBuffer.length} bytes)`
           );
+
+          // Verify the file was written
+          const fileExists = await fs.pathExists(outputPath);
+          const fileSize = fileExists ? (await fs.stat(outputPath)).size : 0;
+          console.log(
+            `File verification: exists=${fileExists}, size=${fileSize} bytes`
+          );
+
           return {
             id,
             success: true,
@@ -237,6 +251,14 @@ async function downloadImages(imageReferences, targetDir) {
   // Wait for all downloads to complete
   const results = await Promise.allSettled(processPromises);
 
+  // List all files in the images directory to verify
+  try {
+    const imageFiles = await fs.readdir(imagesDir);
+    console.log(`Images directory now contains: ${imageFiles.join(", ")}`);
+  } catch (err) {
+    console.error(`Error listing images directory: ${err.message}`);
+  }
+
   // Summarize results
   const successful = results.filter(
     (r) => r.status === "fulfilled" && r.value.success
@@ -340,12 +362,20 @@ app.post("/compile", async (req, res) => {
         console.log(
           `Processing ${Object.keys(imageReferences).length} image references`
         );
+
+        // Log each image reference for debugging
+        Object.entries(imageReferences).forEach(([key, image]) => {
+          console.log(
+            `Image reference: ${key} -> ${image.filename || "unnamed"}`
+          );
+        });
+
         const downloadResult = await downloadImages(imageReferences, dirPath);
         console.log(
           `Image download summary: ${JSON.stringify(downloadResult)}`
         );
 
-        // Check images directory afterwards
+        // Verify the images directory after download
         const imagesDir = path.join(dirPath, "images");
         if (await fs.pathExists(imagesDir)) {
           const imageFiles = await fs.readdir(imagesDir);

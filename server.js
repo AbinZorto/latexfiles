@@ -5,6 +5,7 @@ const { spawn } = require("child_process");
 const fs = require("fs-extra");
 const path = require("path");
 const axios = require("axios");
+const util = require("util");
 
 const app = express();
 app.use(
@@ -89,7 +90,15 @@ async function downloadImages(imageReferences, targetDir) {
 
   // Process each image (either from URL or base64)
   const processPromises = Object.values(imageReferences).map(async (image) => {
-    const { id, url, filename, base64Data, contentType } = image;
+    const {
+      id,
+      url,
+      filename,
+      base64Data,
+      contentType,
+      originalSize,
+      compressedSize,
+    } = image;
     const outputPath = path.join(imagesDir, filename || `${id}.jpg`);
 
     try {
@@ -99,11 +108,18 @@ async function downloadImages(imageReferences, targetDir) {
           `Using provided base64 data for image ${id} (${base64Data.length} bytes)`
         );
 
+        // Log compression stats if available
+        if (originalSize && compressedSize) {
+          console.log(
+            `Image was compressed client-side from ${originalSize} to ${compressedSize} bytes`
+          );
+        }
+
         try {
-          // Decode base64 to buffer with timeout protection for very large images
+          // Decode base64 to buffer
           const imageBuffer = Buffer.from(base64Data, "base64");
 
-          // Check if the buffer is valid (basic validation)
+          // Check if the buffer is valid
           if (imageBuffer.length === 0) {
             throw new Error("Empty buffer after base64 decoding");
           }
@@ -159,26 +175,31 @@ async function downloadImages(imageReferences, targetDir) {
       }
 
       // Check if we actually got image data
-      if (!contentType || !contentType.startsWith("image/")) {
+      const responseContentType = response.headers["content-type"];
+      if (!responseContentType || !responseContentType.startsWith("image/")) {
         // If not an image, write the response to a log file for inspection
         const responseText = response.data.toString().substring(0, 1000); // First 1000 chars
-        console.error(`Non-image content type received: ${contentType}`);
+        console.error(
+          `Non-image content type received: ${responseContentType}`
+        );
         console.error(`Response preview: ${responseText}`);
 
         const logFilePath = path.join(targetDir, `image_${id}_error.log`);
         await fs.writeFile(
           logFilePath,
-          `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${contentType}\n\nResponse:\n${responseText}`
+          `URL: ${url}\nStatus: ${response.status}\nContent-Type: ${responseContentType}\n\nResponse:\n${responseText}`
         );
         console.log(`Wrote error details to ${logFilePath}`);
 
-        throw new Error(`Received non-image content type: ${contentType}`);
+        throw new Error(
+          `Received non-image content type: ${responseContentType}`
+        );
       }
 
       // Write the image data to file
       await fs.writeFile(outputPath, response.data);
       console.log(
-        `Successfully downloaded image ${id} to ${outputPath} (${response.data.length} bytes)`
+        `Successfully saved image ${id} to ${outputPath} (${response.data.length} bytes)`
       );
 
       return {
@@ -354,7 +375,6 @@ app.post("/compile", async (req, res) => {
         stderr1 += data.toString();
         console.error("pdflatex1 stderr:", data.toString());
       });
-
       await new Promise((resolve) =>
         pdflatex1.on("close", (code) => {
           console.log("First pdflatex run completed with code:", code);

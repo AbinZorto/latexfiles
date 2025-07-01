@@ -383,30 +383,30 @@ app.post("/compile", async (req, res) => {
         }
       }
 
-      const pdflatexOptions = [
+      const lualatexOptions = [
         "-file-line-error",
         "-interaction=nonstopmode",
         baseFilename,
       ];
-      console.log("pdflatex options:", pdflatexOptions);
+      console.log("lualatex options:", lualatexOptions);
 
-      // First pdflatex run
-      console.log("Starting first pdflatex run...");
-      const pdflatex1 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      // First lualatex run
+      console.log("Starting first lualatex run...");
+      const lualatex1 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
       let stderr1 = "";
 
-      pdflatex1.stdout.on("data", (data) => {
+      lualatex1.stdout.on("data", (data) => {
         stdout1 += data.toString();
       });
 
-      pdflatex1.stderr.on("data", (data) => {
+      lualatex1.stderr.on("data", (data) => {
         stderr1 += data.toString();
-        console.error("pdflatex1 stderr:", data.toString());
+        console.error("lualatex1 stderr:", data.toString());
       });
 
       await new Promise((resolve) =>
-        pdflatex1.on("close", (code) => {
-          console.log("First pdflatex run completed with code:", code);
+        lualatex1.on("close", (code) => {
+          console.log("First lualatex run completed with code:", code);
           resolve();
         })
       );
@@ -435,44 +435,44 @@ app.post("/compile", async (req, res) => {
         );
       }
 
-      // Second pdflatex run
-      console.log("Starting second pdflatex run...");
-      const pdflatex2 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      // Second lualatex run
+      console.log("Starting second lualatex run...");
+      const lualatex2 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
       let stderr2 = "";
 
-      pdflatex2.stdout.on("data", (data) => {
+      lualatex2.stdout.on("data", (data) => {
         stdout2 += data.toString();
       });
 
-      pdflatex2.stderr.on("data", (data) => {
+      lualatex2.stderr.on("data", (data) => {
         stderr2 += data.toString();
-        console.error("pdflatex2 stderr:", data.toString());
+        console.error("lualatex2 stderr:", data.toString());
       });
 
       await new Promise((resolve) =>
-        pdflatex2.on("close", (code) => {
-          console.log("Second pdflatex run completed with code:", code);
+        lualatex2.on("close", (code) => {
+          console.log("Second lualatex run completed with code:", code);
           resolve();
         })
       );
 
-      // Third pdflatex run
-      console.log("Starting third pdflatex run...");
-      const pdflatex3 = spawn("pdflatex", pdflatexOptions, { cwd: dirPath });
+      // Third lualatex run
+      console.log("Starting third lualatex run...");
+      const lualatex3 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
       let stderr3 = "";
 
-      pdflatex3.stdout.on("data", (data) => {
+      lualatex3.stdout.on("data", (data) => {
         stdout3 += data.toString();
       });
 
-      pdflatex3.stderr.on("data", (data) => {
+      lualatex3.stderr.on("data", (data) => {
         stderr3 += data.toString();
-        console.error("pdflatex3 stderr:", data.toString());
+        console.error("lualatex3 stderr:", data.toString());
       });
 
       await new Promise((resolve) =>
-        pdflatex3.on("close", (code) => {
-          console.log("Third pdflatex run completed with code:", code);
+        lualatex3.on("close", (code) => {
+          console.log("Third lualatex run completed with code:", code);
           resolve();
         })
       );

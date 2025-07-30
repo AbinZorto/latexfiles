@@ -392,11 +392,25 @@ app.post("/compile", async (req, res) => {
 
       // First lualatex run
       console.log("Starting first lualatex run...");
-      const lualatex1 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
+      const requestTimeout = 300000; // 5 minutes in milliseconds
+
+      // First lualatex run
+      console.log("Starting first lualatex run...");
+      const lualatex1 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr1 = "";
 
       lualatex1.stdout.on("data", (data) => {
         stdout1 += data.toString();
+      });
+
+      lualatex1.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex1 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex1 process exceeded ${requestTimeout / 1000} seconds.`);
+        } else {
+          console.error(`lualatex1 process error: ${err.message}`);
+          errors.push(`lualatex1 process error: ${err.message}`);
+        }
       });
 
       lualatex1.stderr.on("data", (data) => {
@@ -437,11 +451,21 @@ app.post("/compile", async (req, res) => {
 
       // Second lualatex run
       console.log("Starting second lualatex run...");
-      const lualatex2 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
+      const lualatex2 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr2 = "";
 
       lualatex2.stdout.on("data", (data) => {
         stdout2 += data.toString();
+      });
+
+      lualatex2.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex2 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex2 process exceeded ${requestTimeout / 1000} seconds.`);
+        } else {
+          console.error(`lualatex2 process error: ${err.message}`);
+          errors.push(`lualatex2 process error: ${err.message}`);
+        }
       });
 
       lualatex2.stderr.on("data", (data) => {
@@ -458,11 +482,21 @@ app.post("/compile", async (req, res) => {
 
       // Third lualatex run
       console.log("Starting third lualatex run...");
-      const lualatex3 = spawn("lualatex", lualatexOptions, { cwd: dirPath });
+      const lualatex3 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr3 = "";
 
       lualatex3.stdout.on("data", (data) => {
         stdout3 += data.toString();
+      });
+
+      lualatex3.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex3 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex3 process exceeded ${requestTimeout / 1000} seconds.`);
+        } else {
+          console.error(`lualatex3 process error: ${err.message}`);
+          errors.push(`lualatex3 process error: ${err.message}`);
+        }
       });
 
       lualatex3.stderr.on("data", (data) => {

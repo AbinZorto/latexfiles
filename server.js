@@ -396,24 +396,17 @@ app.post("/compile", async (req, res) => {
 
       // First lualatex run
       console.log("Starting first lualatex run...");
-      const lualatex1 = spawn("lualatex", lualatexOptions, {
-        cwd: dirPath,
-        timeout: requestTimeout,
-      });
+      const lualatex1 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr1 = "";
 
       lualatex1.stdout.on("data", (data) => {
         stdout1 += data.toString();
       });
 
-      lualatex1.on("error", (err) => {
-        if (err.code === "ETIMEDOUT") {
-          console.error(
-            `lualatex1 process timed out after ${requestTimeout / 1000} seconds.`
-          );
-          errors.push(
-            `Compilation timed out: lualatex1 process exceeded ${requestTimeout / 1000} seconds.`
-          );
+      lualatex1.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex1 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex1 process exceeded ${requestTimeout / 1000} seconds.`);
         } else {
           console.error(`lualatex1 process error: ${err.message}`);
           errors.push(`lualatex1 process error: ${err.message}`);
@@ -458,24 +451,17 @@ app.post("/compile", async (req, res) => {
 
       // Second lualatex run
       console.log("Starting second lualatex run...");
-      const lualatex2 = spawn("lualatex", lualatexOptions, {
-        cwd: dirPath,
-        timeout: requestTimeout,
-      });
+      const lualatex2 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr2 = "";
 
       lualatex2.stdout.on("data", (data) => {
         stdout2 += data.toString();
       });
 
-      lualatex2.on("error", (err) => {
-        if (err.code === "ETIMEDOUT") {
-          console.error(
-            `lualatex2 process timed out after ${requestTimeout / 1000} seconds.`
-          );
-          errors.push(
-            `Compilation timed out: lualatex2 process exceeded ${requestTimeout / 1000} seconds.`
-          );
+      lualatex2.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex2 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex2 process exceeded ${requestTimeout / 1000} seconds.`);
         } else {
           console.error(`lualatex2 process error: ${err.message}`);
           errors.push(`lualatex2 process error: ${err.message}`);
@@ -496,24 +482,17 @@ app.post("/compile", async (req, res) => {
 
       // Third lualatex run
       console.log("Starting third lualatex run...");
-      const lualatex3 = spawn("lualatex", lualatexOptions, {
-        cwd: dirPath,
-        timeout: requestTimeout,
-      });
+      const lualatex3 = spawn("lualatex", lualatexOptions, { cwd: dirPath, timeout: requestTimeout });
       let stderr3 = "";
 
       lualatex3.stdout.on("data", (data) => {
         stdout3 += data.toString();
       });
 
-      lualatex3.on("error", (err) => {
-        if (err.code === "ETIMEDOUT") {
-          console.error(
-            `lualatex3 process timed out after ${requestTimeout / 1000} seconds.`
-          );
-          errors.push(
-            `Compilation timed out: lualatex3 process exceeded ${requestTimeout / 1000} seconds.`
-          );
+      lualatex3.on('error', (err) => {
+        if (err.code === 'ETIMEDOUT') {
+          console.error(`lualatex3 process timed out after ${requestTimeout / 1000} seconds.`);
+          errors.push(`Compilation timed out: lualatex3 process exceeded ${requestTimeout / 1000} seconds.`);
         } else {
           console.error(`lualatex3 process error: ${err.message}`);
           errors.push(`lualatex3 process error: ${err.message}`);
@@ -570,8 +549,9 @@ app.post("/compile", async (req, res) => {
           throw new Error("PDF file not found at expected path");
         }
 
-        const pdfBuffer = (await fs.readFile(pdfPath)).toString("base64");
+        const pdfBuffer = await fs.readFile(pdfPath);
         console.log("PDF file read successfully, size:", pdfBuffer.length);
+        const pdfBase64 = pdfBuffer.toString("base64");
 
         // Extract any errors/warnings from the output
         const logPath = path.join(
@@ -583,36 +563,14 @@ app.post("/compile", async (req, res) => {
         const errors = parseLatexErrors(logContent);
         console.log("Parsed LaTeX errors:", errors);
 
-        // If we have a PDF, return it as binary data with error info in headers
-        // Note: pdfBuffer is already available from line 573
-
-        // Add compilation info to response headers (if not too large)
-        const errorInfo = {
+        // If we have a PDF, return it along with any warnings
+        return res.status(200).json({
+          success: true,
+          pdf: pdfBase64,
           output: formatLatexOutput(stdout1 + stdout2 + stdout3),
           errors: errors,
           warnings: errors.length > 0,
-        };
-
-        // Set headers with compilation info (keeping it small)
-        res.setHeader("Content-Type", "application/pdf");
-        res.setHeader("Content-Length", pdfBuffer.length);
-        res.setHeader("X-LaTeX-Success", "true");
-        res.setHeader("X-LaTeX-Warnings", errors.length > 0 ? "true" : "false");
-        res.setHeader("X-LaTeX-Error-Count", errors.length.toString());
-
-        // For detailed error info, we'll use a separate endpoint or send minimal info
-        // Only include a summary to avoid header size limits
-        if (errors.length > 0) {
-          const errorSummary = errors
-            .slice(0, 3)
-            .map((e) => `Line ${e.line}: ${e.type}`)
-            .join("; ");
-          if (errorSummary.length < 200) {
-            res.setHeader("X-LaTeX-Error-Summary", errorSummary);
-          }
-        }
-
-        return res.status(200).send(pdfBuffer);
+        });
       } catch (pdfError) {
         console.error("Failed to read PDF:", pdfError);
         console.error("Error stack:", pdfError.stack);
